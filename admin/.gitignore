@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+.vite/
+
+# 运行时上传的文件（代码库/需求附件）
+server/uploads/

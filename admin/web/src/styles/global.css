@@ -1,0 +1,156 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  background: #f5f5f5;
+}
+
+.page-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.search-bar {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px 16px 0;
+  margin-bottom: 16px;
+}
+
+/* 侧边栏浮动折叠按钮：悬停时品牌色填充 */
+.sider-trigger {
+  transition: all 0.2s ease;
+}
+.sider-trigger:hover {
+  color: #fff !important;
+  background: linear-gradient(135deg, #1677ff, #0958d9) !important;
+  border-color: transparent !important;
+  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.45) !important;
+}
+
+/* 顶栏用户信息悬停反馈 */
+.user-box {
+  transition: background 0.2s ease;
+}
+.user-box:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* 表格树形展开图标占位符：与展开图标同尺寸，保持叶子节点缩进对齐 */
+.table-expand-spacer {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+}
+
+/* 名称列禁止换行，避免树形缩进挤压后折行 */
+.menu-name-cell {
+  white-space: nowrap;
+}
+
+/* 代码库名称列禁止换行 */
+.repo-name-cell {
+  white-space: nowrap;
+}
+
+/* ByteMD 全屏后需覆盖在弹窗内容之上，避免下方的「需求文档 / 设计稿」等按钮穿透 */
+.bytemd-fullscreen.bytemd {
+  z-index: 2000;
+}
+
+/* CodeMirror 代码编辑框：与 antd 输入框风格对齐（边框 / 圆角 / 聚焦环） */
+.code-editor .cm-editor {
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 13px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.code-editor .cm-editor:hover {
+  border-color: #4096ff;
+}
+.code-editor .cm-editor.cm-focused {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(5, 145, 255, 0.1);
+  outline: none;
+}
+.code-editor .cm-gutters {
+  background-color: #fafafa;
+  border-right: 1px solid #f0f0f0;
+  color: #999;
+}
+.code-editor .cm-scroller {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  line-height: 1.6;
+}
+
+/* 响应数据编辑器下方的示例代码片段 */
+.code-sample {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #444;
+  white-space: pre;
+  overflow: auto;
+  max-height: 200px;
+}
+
+/* 手动渲染的表单字段标签，与 antd 垂直布局 label 对齐 */
+.field-label {
+  display: inline-block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  line-height: 1.5714;
+  color: rgba(0, 0, 0, 0.88);
+}
+
+/* 响应数据编辑器工具栏 */
+.code-wrap {
+  position: relative;
+}
+.code-toolbar {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+/* 响应数据编辑器全屏模式 */
+.code-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: #fff;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+.code-fullscreen .code-toolbar {
+  margin-bottom: 8px;
+}
+.code-fullscreen .code-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.code-fullscreen .code-editor .cm-editor {
+  height: 100% !important;
+  flex: 1;
+}

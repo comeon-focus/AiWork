@@ -1,0 +1,53 @@
+import {
+  DataTypes,
+  Model,
+  type CreationOptional,
+  type InferAttributes,
+  type InferCreationAttributes,
+} from 'sequelize';
+import { sequelize } from '../db/index.js';
+
+/** AI 任务状态枚举 */
+export const AI_TASK_STATUS = ['待开始', '进行中', '已结束'] as const;
+export type AITaskStatus = (typeof AI_TASK_STATUS)[number];
+
+/** AI 任务：智能编排下的任务条目，关联一条智能文档与一个代码分支 */
+export class AITask extends Model<InferAttributes<AITask>, InferCreationAttributes<AITask>> {
+  declare id: CreationOptional<number>;
+  declare title: string;
+  declare summary: string | null;
+  /** 会话 ID：创建时自动生成的 16 位 base62 唯一标识 */
+  declare sessionId: string;
+  /** 关联智能文档 id（单关联，可空） */
+  declare smartDocId: number | null;
+  /** 代码分支 */
+  declare branch: string | null;
+  /** 任务状态：待开始 / 进行中 / 已结束 */
+  declare status: AITaskStatus;
+  declare creatorId: number | null;
+  declare creatorName: string | null;
+  declare createdAt: CreationOptional<Date>;
+  declare updatedAt: CreationOptional<Date>;
+}
+
+AITask.init(
+  {
+    id: { type: DataTypes.INTEGER.UNSIGNED, autoIncrement: true, primaryKey: true },
+    title: { type: DataTypes.STRING(100), allowNull: false, comment: '任务标题' },
+    summary: { type: DataTypes.STRING(255), allowNull: true, comment: '任务摘要' },
+    sessionId: { type: DataTypes.STRING(16), allowNull: false, unique: true, comment: '会话 ID（创建时自动生成）' },
+    smartDocId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, comment: '关联智能文档 id' },
+    branch: { type: DataTypes.STRING(100), allowNull: true, comment: '代码分支' },
+    status: {
+      type: DataTypes.ENUM(...AI_TASK_STATUS),
+      allowNull: false,
+      defaultValue: '待开始',
+      comment: '任务状态：待开始/进行中/已结束',
+    },
+    creatorId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
+    creatorName: { type: DataTypes.STRING(50), allowNull: true },
+    createdAt: DataTypes.DATE,
+    updatedAt: DataTypes.DATE,
+  },
+  { sequelize, modelName: 'AITask', tableName: 'sys_ai_task' },
+);

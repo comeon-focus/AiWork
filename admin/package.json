@@ -1,0 +1,24 @@
+{
+  "name": "admin-rbac",
+  "private": true,
+  "version": "1.0.0",
+  "description": "零零七管理平台 - React + Ant Design + Node.js + MySQL",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w server && npm run build -w web",
+    "db:init": "npm run db:init -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.4"
+  }
+}

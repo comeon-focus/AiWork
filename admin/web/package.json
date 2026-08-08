@@ -1,0 +1,37 @@
+{
+  "name": "web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^5.6.1",
+    "@ant-design/v5-patch-for-react-19": "^1.0.3",
+    "@bytemd/plugin-gfm": "^1.22.0",
+    "@bytemd/react": "^1.22.0",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@uiw/react-codemirror": "^4.25.11",
+    "antd": "^5.29.3",
+    "axios": "^1.19.0",
+    "dayjs": "^1.11.21",
+    "prettier": "^3.9.6",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.18.2",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.0"
+  }
+}
