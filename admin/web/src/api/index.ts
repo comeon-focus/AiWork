@@ -3,12 +3,15 @@ import type {
   AITaskItem,
   AITaskInput,
   AITaskStatus,
+  AiTaskCommitResult,
   AicodingStatus,
   AiSubTaskItem,
   AiSubTaskInput,
   AiCompileLogItem,
   AiCompileLogTail,
   AiCompileStatus,
+  AiGitCommitItem,
+  AiGitCommitStatus,
   CodeRepoItem,
   DataSimProjectItem,
   DataSimInterfaceItem,
@@ -35,6 +38,8 @@ import type {
 
 /** AI 润色为长耗时任务，单独放宽超时时间 */
 const AI_TIMEOUT = 300000;
+/** git 提交推送需要走网络（SSH 推远端），比默认 15s 慢得多 */
+const GIT_TIMEOUT = 120000;
 
 export const authApi = {
   login: (body: { username: string; password: string }) => http.post<TokenPair>('/auth/login', body),
@@ -138,6 +143,9 @@ export const aiTaskApi = {
   updateStatus: (id: number, status: AITaskStatus) =>
     http.patch<AITaskItem>(`/ai-tasks/${id}/status`, { status }),
   aicoding: (id: number) => http.post<{ codingStatus: AicodingStatus }>(`/ai-tasks/${id}/aicoding`),
+  /** 提交并推送该任务代码库下的全部改动；push 走网络，超时单独放宽 */
+  commit: (id: number) =>
+    http.post<AiTaskCommitResult>(`/ai-tasks/${id}/commit`, undefined, { timeout: GIT_TIMEOUT }),
   remove: (id: number) => http.delete<null>(`/ai-tasks/${id}`),
 };
 
@@ -166,6 +174,20 @@ export const aiCompileLogApi = {
   tail: (id: number, offset: number) =>
     http.get<AiCompileLogTail>(`/ai-compile-logs/${id}/tail`, { offset }),
   remove: (id: number) => http.delete<null>(`/ai-compile-logs/${id}`),
+};
+
+export const aiGitCommitApi = {
+  list: (params?: {
+    title?: string;
+    sessionId?: string;
+    status?: AiGitCommitStatus;
+    taskId?: number;
+    page?: number;
+    pageSize?: number;
+  }) => http.get<PageResult<AiGitCommitItem>>('/ai-git-commits', params),
+  /** 详情比列表多一个改动明细字段 */
+  detail: (id: number) => http.get<AiGitCommitItem>(`/ai-git-commits/${id}`),
+  remove: (id: number) => http.delete<null>(`/ai-git-commits/${id}`),
 };
 
 export const smartDocApi = {

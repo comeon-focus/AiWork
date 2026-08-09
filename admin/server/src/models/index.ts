@@ -20,6 +20,7 @@ import {
   type AiCompileStatus,
   type AiCompileTaskType,
 } from './aiCompileLog.js';
+import { AiGitCommit, AI_GIT_COMMIT_STATUS, type AiGitCommitStatus } from './aiGitCommit.js';
 import { Demand, DEMAND_STATUS, type DemandStatus } from './demand.js';
 import { DemandFile } from './demandFile.js';
 import { RequirementDemand } from './requirementDemand.js';
@@ -129,6 +130,9 @@ export {
   type AiCompileStatus,
   AI_COMPILE_TASK_TYPE,
   type AiCompileTaskType,
+  AiGitCommit,
+  AI_GIT_COMMIT_STATUS,
+  type AiGitCommitStatus,
   Demand,
   DemandFile,
   RequirementDemand,

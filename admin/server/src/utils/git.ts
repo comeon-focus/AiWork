@@ -1,10 +1,11 @@
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /** AI 任务工作区根目录：当前运行环境目录下的 AiWorkSpace */
 export const AI_WORKSPACE_DIR = path.resolve(process.cwd(), 'AiWorkSpace');
@@ -175,6 +176,113 @@ export async function diffRepoSince(dir: string, before: RepoSnapshot): Promise<
   } catch {
     return empty;
   }
+}
+
+/** 一次「提交代码」的结果 */
+export interface CommitResult {
+  /** 本次提交涉及的文件数 */
+  changedFiles: number;
+  /** 短 commit hash */
+  commitHash: string;
+  /** 提交所在分支 */
+  branch: string;
+  /** 改动明细：每行「状态 路径」，超出上限截断 */
+  detail: string;
+}
+
+/** 提交记录里保留的改动明细最大行数 */
+const MAX_DETAIL_LINES = 200;
+
+/**
+ * commit 已经落地之后的失败（拉取或推送）。
+ * 单独成类是因为这一刻的语义很特殊：改动已经进了本地仓库，不能提示用户「重新提交」，
+ * 否则他会以为改动丢了而反复点击。result 里带着完整的提交信息供失败记录留痕。
+ */
+export class GitAfterCommitError extends Error {
+  constructor(
+    readonly stage: 'pull' | 'push',
+    readonly result: CommitResult,
+    readonly reason: string,
+  ) {
+    super(reason);
+    this.name = 'GitAfterCommitError';
+  }
+}
+
+/** porcelain 输出转成可读明细，过长时截断 */
+function buildDetail(status: string): string {
+  const lines = status
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length <= MAX_DETAIL_LINES) return lines.join('\n');
+  return [...lines.slice(0, MAX_DETAIL_LINES), `… 其余 ${lines.length - MAX_DETAIL_LINES} 个文件省略`].join('\n');
+}
+
+/**
+ * 不经过 shell 执行 git —— 提交信息里带任务标题，属于用户输入，
+ * 拼进 shell 字符串会有命令注入风险，必须走参数数组。
+ */
+async function gitExec(dir: string, args: string[], timeoutMs = 120000): Promise<string> {
+  const { stdout } = await execFileAsync('git', ['-c', 'core.quotepath=false', ...args], {
+    cwd: dir,
+    timeout: timeoutMs,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  return stdout.trim();
+}
+
+/** git 报错信息优先取 stderr，比 "Command failed: ..." 可读得多 */
+function gitErrMsg(e: unknown): string {
+  const err = e as { stderr?: string; message?: string };
+  const raw = err.stderr?.trim() || err.message || String(e);
+  return raw.length > 500 ? `${raw.slice(0, 500)}…` : raw;
+}
+
+/**
+ * 提交工作区内全部改动（含新增与删除），拉取远端后推送到同名分支。
+ *
+ * 顺序是 commit → pull --rebase → push，而不是先拉后提交：
+ * 工作区几乎总是脏的（AICoding 刚改完），先 commit 能让工作区变干净，
+ * 拉取就不必依赖 --autostash，也就不存在暂存恢复冲突这一类难以收拾的中间态。
+ *
+ * - 无改动返回 null，由调用方给出「无需提交」的提示；此时也不拉取，
+ *   避免一次「没什么可提交」的点击悄悄改动了用户的工作区
+ * - commit 之后任一步失败都抛 GitAfterCommitError，且不回滚本地提交：
+ *   reset 属于破坏性操作，把真实状态如实告诉用户更安全
+ */
+export async function commitAllAndPush(
+  dir: string,
+  message: string,
+  timeoutMs = 120000,
+): Promise<CommitResult | null> {
+  // -uall：未跟踪目录展开成具体文件，否则整个新目录只算 1 个改动
+  const status = await gitExec(dir, ['status', '--porcelain', '-uall'], 30000);
+  if (!status) return null;
+  const changedFiles = parsePorcelain(status).size;
+  // 明细必须在 add 之前取：add 之后 porcelain 全变成 A/M 暂存态，看不出原本是新增还是修改
+  const detail = buildDetail(status);
+
+  const branch = await gitExec(dir, ['rev-parse', '--abbrev-ref', 'HEAD'], 30000);
+  await gitExec(dir, ['add', '-A'], timeoutMs);
+  await gitExec(dir, ['commit', '-m', message], timeoutMs);
+  const commitHash = await gitExec(dir, ['rev-parse', '--short', 'HEAD'], 30000);
+  const result: CommitResult = { changedFiles, commitHash, branch, detail };
+
+  try {
+    await gitExec(dir, ['pull', '--rebase', 'origin', branch], timeoutMs);
+  } catch (e) {
+    // 冲突会把仓库停在 rebase 中间态，不回滚的话之后任何 git 操作都会被挡下来
+    await gitExec(dir, ['rebase', '--abort'], 30000).catch(() => undefined);
+    throw new GitAfterCommitError('pull', result, gitErrMsg(e));
+  }
+
+  try {
+    await gitExec(dir, ['push', 'origin', branch], timeoutMs);
+  } catch (e) {
+    throw new GitAfterCommitError('push', result, gitErrMsg(e));
+  }
+  return result;
 }
 
 /** 删除当前任务本地代码文件夹（已结束清理用） */

@@ -402,6 +402,8 @@ export default function AiTaskPage() {
   /** 创建任务时（拉取代码库 + 切换分支 + 写库）的加载与进度状态 */
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  /** 正在提交代码的任务 id */
+  const [committingId, setCommittingId] = useState<number | null>(null);
 
   const load = useCallback(
     async (next?: { page?: number; pageSize?: number }) => {
@@ -534,6 +536,18 @@ export default function AiTaskPage() {
     void load();
   };
 
+  /** 提交代码：commit + push 要走网络，用 id 标记按钮 loading，避免重复点击 */
+  const commitCode = async (id: number) => {
+    setCommittingId(id);
+    try {
+      const r = await aiTaskApi.commit(id);
+      message.success(`已提交 ${r.changedFiles} 个文件并推送到 ${r.branch}（${r.commitHash}）`);
+      void load();
+    } finally {
+      setCommittingId(null);
+    }
+  };
+
   const openSubModal = (record: AITaskItem) => {
     setSubParent(record);
     setSubOpen(true);
@@ -618,7 +632,7 @@ export default function AiTaskPage() {
           rowKey="id"
           loading={loading}
           dataSource={data}
-          scroll={{ x: 1660 }}
+          scroll={{ x: 1600 }}
           pagination={{
             current: page,
             pageSize,
@@ -660,47 +674,72 @@ export default function AiTaskPage() {
             { title: '创建时间', dataIndex: 'createdAt', width: 180 },
             {
               title: '操作',
-              width: 340,
+              width: 280,
               fixed: 'right',
               render: (_, record) => (
-                <Space size={4}>
-                  <Auth perms="orchestration:aiTask:list">
-                    <Button type="link" size="small" onClick={() => openSubModal(record)}>
-                      子任务
-                    </Button>
-                  </Auth>
-                  <Auth perms="orchestration:aiTask:edit">
-                    <Button type="link" size="small" onClick={() => openStatusModal(record)}>
-                      修改状态
-                    </Button>
-                  </Auth>
-                  <Auth perms="orchestration:aiTask:edit">
-                    <Button type="link" size="small" onClick={() => openModal(record, record.status === '已结束')}>
-                      {record.status === '已结束' ? '查看' : '编辑'}
-                    </Button>
-                  </Auth>
-                  <Auth perms="orchestration:aiTask:remove">
-                    <Popconfirm title="确认删除该 AI 任务？" onConfirm={() => remove(record.id)}>
-                      <Button type="link" size="small" danger>
-                        删除
+                <div style={{ display: 'flex', flexDirection: 'column', rowGap: 4 }}>
+                  <Space size={4} wrap>
+                    <Auth perms="orchestration:aiTask:list">
+                      <Button type="link" size="small" onClick={() => openSubModal(record)}>
+                        子任务
                       </Button>
-                    </Popconfirm>
-                  </Auth>
-                  <Auth perms="orchestration:aiTask:edit">
-                    <Popconfirm
-                      title="启动 AICoding？将根据关联智能文档在代码库中进行修改"
-                      onConfirm={() => startAicoding(record.id)}
-                    >
-                      <Button
-                        type="link"
-                        size="small"
-                        disabled={record.codingStatus === '编译中' || record.codingActive || record.status === '已结束'}
+                    </Auth>
+                    <Auth perms="orchestration:aiTask:edit">
+                      <Button type="link" size="small" onClick={() => openStatusModal(record)}>
+                        修改状态
+                      </Button>
+                    </Auth>
+                    <Auth perms="orchestration:aiTask:edit">
+                      <Button type="link" size="small" onClick={() => openModal(record, record.status === '已结束')}>
+                        {record.status === '已结束' ? '查看' : '编辑'}
+                      </Button>
+                    </Auth>
+                  </Space>
+                  <Space size={4} wrap>
+                    <Auth perms="orchestration:aiTask:remove">
+                      <Popconfirm title="确认删除该 AI 任务？" onConfirm={() => remove(record.id)}>
+                        <Button type="link" size="small" danger>
+                          删除
+                        </Button>
+                      </Popconfirm>
+                    </Auth>
+                    <Auth perms="orchestration:aiTask:edit">
+                      <Popconfirm
+                        title="启动 AICoding？将根据关联智能文档在代码库中进行修改"
+                        onConfirm={() => startAicoding(record.id)}
                       >
-                        AICoding
-                      </Button>
-                    </Popconfirm>
-                  </Auth>
-                </Space>
+                        <Button
+                          type="link"
+                          size="small"
+                          disabled={record.codingStatus === '编译中' || record.codingActive || record.status === '已结束'}
+                        >
+                          AICoding
+                        </Button>
+                      </Popconfirm>
+                    </Auth>
+                    <Auth perms="orchestration:aiTask:commit">
+                      <Popconfirm
+                        title="提交代码"
+                        description={`将先提交该任务代码库下的全部改动，再拉取并推送到远端分支「${record.branch || '当前分支'}」`}
+                        onConfirm={() => commitCode(record.id)}
+                      >
+                        <Button
+                          type="link"
+                          size="small"
+                          loading={committingId === record.id}
+                          disabled={
+                            record.codingStatus === '编译中' ||
+                            record.codingActive ||
+                            record.status === '已结束' ||
+                            !record.hasWorkspace
+                          }
+                        >
+                          提交代码
+                        </Button>
+                      </Popconfirm>
+                    </Auth>
+                  </Space>
+                </div>
               ),
             },
           ]}

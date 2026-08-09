@@ -248,6 +248,7 @@ const MENU_SEED: MenuSeed[] = [
           { name: '新增任务', type: MenuType.BUTTON, perms: 'orchestration:aiTask:add' },
           { name: '编辑任务', type: MenuType.BUTTON, perms: 'orchestration:aiTask:edit' },
           { name: '删除任务', type: MenuType.BUTTON, perms: 'orchestration:aiTask:remove' },
+          { name: '提交代码', type: MenuType.BUTTON, perms: 'orchestration:aiTask:commit' },
         ],
       },
       {
@@ -259,6 +260,17 @@ const MENU_SEED: MenuSeed[] = [
         perms: 'orchestration:compileLog:list',
         children: [
           { name: '删除记录', type: MenuType.BUTTON, perms: 'orchestration:compileLog:remove' },
+        ],
+      },
+      {
+        name: 'GIT提交记录',
+        type: MenuType.MENU,
+        path: '/ai-orchestration/git-commit',
+        component: 'aiOrchestration/gitCommit/index',
+        icon: 'BranchesOutlined',
+        perms: 'orchestration:gitCommit:list',
+        children: [
+          { name: '删除记录', type: MenuType.BUTTON, perms: 'orchestration:gitCommit:remove' },
         ],
       },
     ],

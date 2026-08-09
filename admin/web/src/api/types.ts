@@ -201,9 +201,23 @@ export interface AITaskItem {
   codingError?: string | null;
   /** 该任务（含任一子任务）是否正在 AICoding —— 用于禁用按钮 */
   codingActive?: boolean;
+  /** 本地代码库目录是否存在 —— 无代码库时不能提交代码 */
+  hasWorkspace?: boolean;
   creatorId: number | null;
   creatorName: string | null;
   createdAt: string;
+}
+
+/** 提交代码结果 */
+export interface AiTaskCommitResult {
+  /** 本次提交涉及的文件数 */
+  changedFiles: number;
+  /** 短 commit hash */
+  commitHash: string;
+  /** 提交所在分支 */
+  branch: string;
+  /** 实际使用的 commit 注释 */
+  message: string;
 }
 
 export interface AITaskInput {
@@ -329,6 +343,40 @@ export interface AiCompileLogTail {
   outputTokens: number;
   toolCalls: number;
   commitsAhead: number | null;
+}
+
+/* ── GIT 提交记录 ─────────────────────────── */
+
+export type AiGitCommitStatus = '提交成功' | '提交失败';
+
+export const AI_GIT_COMMIT_STATUS: AiGitCommitStatus[] = ['提交成功', '提交失败'];
+
+export const AI_GIT_COMMIT_STATUS_COLOR: Record<AiGitCommitStatus, string> = {
+  提交成功: 'success',
+  提交失败: 'error',
+};
+
+/** 一次「提交代码」的记录（列表接口不含 changedDetail，详情接口才返回） */
+export interface AiGitCommitItem {
+  id: number;
+  /** 关联的任务会话 ID */
+  sessionId: string;
+  taskId: number;
+  /** 与 AI 任务标题一致 */
+  title: string;
+  branch: string | null;
+  status: AiGitCommitStatus;
+  /** 本次使用的 commit 注释 */
+  commitMessage: string;
+  /** 短 commit hash；推送失败时本地提交已生成，此字段仍有值 */
+  commitHash: string | null;
+  changedFiles: number | null;
+  /** 改动明细，仅详情接口返回 */
+  changedDetail?: string | null;
+  errorMsg: string | null;
+  creatorId: number | null;
+  creatorName: string | null;
+  createdAt: string;
 }
 
 /** 智能文档：需求经 AI 润色后生成的 Markdown 文档 */

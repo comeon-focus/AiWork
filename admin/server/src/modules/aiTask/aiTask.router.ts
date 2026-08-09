@@ -108,6 +108,19 @@ router.patch(
 );
 
 router.post(
+  '/:id/commit',
+  requirePerms('orchestration:aiTask:commit'),
+  operLog('AI任务', 'UPDATE'),
+  validate(idSchema, 'params'),
+  async (req, res) => {
+    const { id } = req.params as unknown as z.infer<typeof idSchema>;
+    const auth = req.user!;
+    const r = await service.commitAiTaskCode(id, { id: auth.id, nickname: auth.nickname });
+    ok(res, r, `已提交 ${r.changedFiles} 个文件并推送到 ${r.branch}`);
+  },
+);
+
+router.post(
   '/:id/aicoding',
   requirePerms('orchestration:aiTask:edit'),
   operLog('AI任务', 'UPDATE'),

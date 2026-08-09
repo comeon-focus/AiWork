@@ -23,6 +23,9 @@ import {
   clearCodebuddySession,
   snapshotRepo,
   diffRepoSince,
+  commitAllAndPush,
+  GitAfterCommitError,
+  type CommitResult,
 } from '../../utils/git.js';
 import { runAICoding, resolveModel } from '../../utils/codebuddy.js';
 import {
@@ -30,6 +33,10 @@ import {
   appendCompileLine,
   finishCompileLog,
 } from '../aiCompileLog/aiCompileLog.service.js';
+import {
+  recordGitCommit,
+  type GitCommitRecordInput,
+} from '../aiGitCommit/aiGitCommit.service.js';
 
 export interface AITaskInput {
   title: string;
@@ -67,21 +74,25 @@ export async function listAiTasks(filter: {
     distinct: true,
     include: [{ model: SmartDoc, as: 'smartDoc', attributes: ['id', 'title'], required: false }],
   });
-  // 标记「整个任务是否正在 AICoding」：父任务自身或任一子任务处于编译中
-  if (rows.length) {
-    const activeSubs = await AiSubTask.findAll({
-      where: { parentId: { [Op.in]: rows.map((r) => r.id) }, codingStatus: '编译中' },
-      attributes: ['parentId'],
-      group: ['parentId'],
-      raw: true,
-    });
-    const activeParentIds = new Set((activeSubs as { parentId: number }[]).map((s) => s.parentId));
-    for (const r of rows) {
-      (r as unknown as { codingActive: boolean }).codingActive =
-        r.codingStatus === '编译中' || activeParentIds.has(r.id);
-    }
-  }
-  return { rows, count };
+  if (!rows.length) return { rows: [], count };
+
+  // 「整个任务是否正在 AICoding」：父任务自身或任一子任务处于编译中
+  const activeSubs = await AiSubTask.findAll({
+    where: { parentId: { [Op.in]: rows.map((r) => r.id) }, codingStatus: '编译中' },
+    attributes: ['parentId'],
+    group: ['parentId'],
+    raw: true,
+  });
+  const activeParentIds = new Set((activeSubs as { parentId: number }[]).map((s) => s.parentId));
+
+  // 计算字段必须挂到 plain 对象上：直接赋给 Sequelize 实例会被 toJSON() 丢掉，发不到前端
+  const list = rows.map((r) => ({
+    ...(r.get({ plain: true }) as Record<string, unknown>),
+    codingActive: r.codingStatus === '编译中' || activeParentIds.has(r.id),
+    // 未关联代码库、或任务结束后已回收目录的，前端据此禁用「提交代码」
+    hasWorkspace: fs.existsSync(taskWorkspaceDir(r.sessionId)),
+  }));
+  return { rows: list, count };
 }
 
 export async function createAiTask(input: AITaskInput) {
@@ -206,6 +217,80 @@ export async function removeAiTask(id: number) {
     await removeWorkspaceDir(sid);
   }
   await task.destroy();
+}
+
+/* ── 提交代码 ─────────────────────────── */
+
+/**
+ * commit 注释：固定前缀 + SessionID + 任务标题，用 '-' 连接。
+ * 标题里的换行会破坏 commit 首行，统一压成空格。
+ */
+export function buildCommitMessage(sessionId: string, title: string): string {
+  return ['feat: AICoding', sessionId, title.replace(/\s+/g, ' ').trim()].join('-');
+}
+
+/**
+ * 提交该任务代码库下的全部改动并推送到远端。
+ * 无论成败都会在「GIT提交记录」里留一条：失败原因与接口返回的提示保持同一份文案，
+ * 用户在弹窗里看到什么，事后在列表里就能查到什么。
+ */
+export async function commitAiTaskCode(
+  id: number,
+  actor?: AicodingActor | null,
+): Promise<CommitResult & { message: string }> {
+  const task = await AITask.findByPk(id);
+  if (!task) throw ApiError.notFound('AI任务不存在');
+
+  const message = buildCommitMessage(task.sessionId, task.title);
+  const base = {
+    sessionId: task.sessionId,
+    taskId: task.id,
+    title: task.title,
+    branch: task.branch,
+    commitMessage: message,
+    creatorId: actor?.id ?? null,
+    creatorName: actor?.nickname ?? null,
+  };
+  /** 记录失败并抛出——两处必须用同一段文案，所以收敛成一个出口 */
+  const fail = async (reason: string, extra?: Partial<GitCommitRecordInput>): Promise<never> => {
+    await recordGitCommit({ ...base, status: '提交失败', errorMsg: reason, ...extra });
+    throw ApiError.badRequest(reason);
+  };
+
+  if (task.status === '已结束') return fail('该任务已结束，本地代码库已回收，无法提交');
+  if (await isTaskLocked(task.id)) return fail('该任务正在 AICoding 中，请等编译结束后再提交');
+
+  const dir = taskWorkspaceDir(task.sessionId);
+  if (!fs.existsSync(dir)) return fail('该任务没有本地代码库，无法提交');
+
+  let result: CommitResult | null;
+  try {
+    result = await commitAllAndPush(dir, message);
+  } catch (e) {
+    // 拉取/推送失败时本地 commit 已经落地，必须如实说明，否则用户会重复点击
+    if (e instanceof GitAfterCommitError) {
+      const { stage, result: r } = e;
+      const what = stage === 'pull' ? '拉取' : '推送';
+      return fail(`代码已在本地提交（${r.commitHash}），但${what}远端分支『${r.branch}』失败：${e.reason}`, {
+        commitHash: r.commitHash,
+        branch: r.branch,
+        changedFiles: r.changedFiles,
+        changedDetail: r.detail,
+      });
+    }
+    return fail(`提交代码失败：${(e as Error).message}`);
+  }
+  if (!result) return fail('该任务代码库没有需要提交的改动');
+
+  await recordGitCommit({
+    ...base,
+    status: '提交成功',
+    branch: result.branch,
+    commitHash: result.commitHash,
+    changedFiles: result.changedFiles,
+    changedDetail: result.detail,
+  });
+  return { ...result, message };
 }
 
 /* ── AICoding 并发与锁定辅助 ─────────────────────────── */
