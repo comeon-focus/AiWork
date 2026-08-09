@@ -46,6 +46,7 @@ export interface AITaskInput {
 
 export async function listAiTasks(filter: {
   title?: string;
+  sessionId?: string;
   status?: AITaskStatus;
   smartDocId?: number;
   offset?: number;
@@ -53,6 +54,8 @@ export async function listAiTasks(filter: {
 }) {
   const where: Record<string, unknown> = {};
   if (filter.title) where.title = { [Op.like]: `%${filter.title}%` };
+  // 模糊匹配：Session ID 有 16 位，允许只记得片段时也能搜到
+  if (filter.sessionId) where.sessionId = { [Op.like]: `%${filter.sessionId}%` };
   if (filter.status) where.status = filter.status;
   if (filter.smartDocId) where.smartDocId = filter.smartDocId;
 

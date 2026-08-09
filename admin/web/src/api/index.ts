@@ -125,8 +125,14 @@ export const demandApi = {
 };
 
 export const aiTaskApi = {
-  list: (params?: { title?: string; status?: AITaskStatus; smartDocId?: number; page?: number; pageSize?: number }) =>
-    http.get<PageResult<AITaskItem>>('/ai-tasks', params),
+  list: (params?: {
+    title?: string;
+    sessionId?: string;
+    status?: AITaskStatus;
+    smartDocId?: number;
+    page?: number;
+    pageSize?: number;
+  }) => http.get<PageResult<AITaskItem>>('/ai-tasks', params),
   create: (body: AITaskInput) => http.post<AITaskItem>('/ai-tasks', body),
   update: (id: number, body: AITaskInput) => http.put<AITaskItem>(`/ai-tasks/${id}`, body),
   updateStatus: (id: number, status: AITaskStatus) =>

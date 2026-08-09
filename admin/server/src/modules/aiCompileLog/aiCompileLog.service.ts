@@ -205,7 +205,8 @@ export async function listCompileLogs(filter: {
 }) {
   const where: Record<string, unknown> = {};
   if (filter.title) where.title = { [Op.like]: `%${filter.title}%` };
-  if (filter.sessionId) where.sessionId = filter.sessionId;
+  // 模糊匹配：与 AI 任务列表保持一致，允许只记得片段时也能搜到
+  if (filter.sessionId) where.sessionId = { [Op.like]: `%${filter.sessionId}%` };
   if (filter.status) where.status = filter.status;
   if (filter.taskId) where.taskId = filter.taskId;
   return AiCompileLog.findAndCountAll({

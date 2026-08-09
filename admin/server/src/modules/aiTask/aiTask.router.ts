@@ -22,6 +22,7 @@ const statusSchema = z.object({ status: z.enum(AI_TASK_STATUS) });
 
 const querySchema = z.object({
   title: z.string().trim().optional(),
+  sessionId: z.string().trim().optional(),
   status: z.enum(AI_TASK_STATUS).optional(),
   smartDocId: z.coerce.number().int().positive().optional(),
   page: z.coerce.number().int().optional(),
@@ -39,6 +40,7 @@ router.get(
     const paging = parsePaging(q);
     const { rows, count } = await service.listAiTasks({
       title: q.title,
+      sessionId: q.sessionId,
       status: q.status,
       smartDocId: q.smartDocId,
       offset: paging.offset,

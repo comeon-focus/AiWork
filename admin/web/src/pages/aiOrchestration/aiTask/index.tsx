@@ -11,6 +11,7 @@ import type {
 } from '@/api/types';
 import { AI_TASK_STATUS, AI_CODING_STATUS_COLOR } from '@/api/types';
 import { Auth } from '@/components/Auth';
+import { SessionIdTag } from '@/components/SessionIdTag';
 
 /** AI 任务状态对应 Tag 颜色 */
 const AI_TASK_STATUS_COLOR: Record<AITaskStatus, string> = {
@@ -382,6 +383,7 @@ export default function AiTaskPage() {
   const [data, setData] = useState<AITaskItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
+  const [sessionId, setSessionId] = useState('');
   const [statusFilter, setStatusFilter] = useState<AITaskStatus | undefined>();
   const [docFilter, setDocFilter] = useState<number | undefined>();
   const [page, setPage] = useState(1);
@@ -409,6 +411,7 @@ export default function AiTaskPage() {
         const ps = next?.pageSize ?? pageSize;
         const resp = await aiTaskApi.list({
           ...(keyword ? { title: keyword } : {}),
+          ...(sessionId ? { sessionId } : {}),
           ...(statusFilter ? { status: statusFilter } : {}),
           ...(docFilter ? { smartDocId: docFilter } : {}),
           page: p,
@@ -422,7 +425,7 @@ export default function AiTaskPage() {
         setLoading(false);
       }
     },
-    [keyword, statusFilter, docFilter, page, pageSize],
+    [keyword, sessionId, statusFilter, docFilter, page, pageSize],
   );
 
   useEffect(() => {
@@ -556,6 +559,14 @@ export default function AiTaskPage() {
             onPressEnter={() => load()}
             style={{ width: 200 }}
           />
+          <Input
+            placeholder="Session ID"
+            allowClear
+            value={sessionId}
+            onChange={(e) => setSessionId(e.target.value)}
+            onPressEnter={() => load({ page: 1 })}
+            style={{ width: 200 }}
+          />
           <Select
             placeholder="任务状态"
             allowClear
@@ -581,6 +592,7 @@ export default function AiTaskPage() {
             icon={<ReloadOutlined />}
             onClick={() => {
               setKeyword('');
+              setSessionId('');
               setStatusFilter(undefined);
               setDocFilter(undefined);
               void load({ page: 1 });
@@ -606,7 +618,7 @@ export default function AiTaskPage() {
           rowKey="id"
           loading={loading}
           dataSource={data}
-          scroll={{ x: 1640 }}
+          scroll={{ x: 1660 }}
           pagination={{
             current: page,
             pageSize,
@@ -620,9 +632,9 @@ export default function AiTaskPage() {
             {
               title: 'Session ID',
               dataIndex: 'sessionId',
-              width: 180,
+              width: 200,
               fixed: 'left',
-              render: (v: string) => <Tag color="purple">{v}</Tag>,
+              render: (v: string) => <SessionIdTag value={v} />,
             },
             {
               title: 'Coding 状态',

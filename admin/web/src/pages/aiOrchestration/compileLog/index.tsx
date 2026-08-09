@@ -19,6 +19,7 @@ import { aiCompileLogApi } from '@/api';
 import type { AiCompileLogItem, AiCompileLogTail, AiCompileStatus } from '@/api/types';
 import { AI_COMPILE_STATUS, AI_COMPILE_STATUS_COLOR } from '@/api/types';
 import { Auth } from '@/components/Auth';
+import { SessionIdTag } from '@/components/SessionIdTag';
 
 /** 编译中时的日志轮询间隔，与后端 1s 刷盘配合，最坏可见延迟约 2.5s */
 const TAIL_INTERVAL = 1500;
@@ -133,7 +134,7 @@ function LogDrawer({ record, open, onClose }: { record: AiCompileLogItem; open: 
       {tail?.truncated && <Alert type="warning" showIcon message="日志超出上限已截断，后续输出未记录" />}
 
       <Descriptions size="small" column={4} bordered items={[
-        { label: 'Session ID', children: <Tag color="purple">{record.sessionId}</Tag> },
+        { label: 'Session ID', children: <SessionIdTag value={record.sessionId} /> },
         { label: '类型', children: record.taskType },
         { label: '分支', children: record.branch || '-' },
         { label: '模型', children: record.model || '默认' },
@@ -303,8 +304,8 @@ export default function CompileLogPage() {
             {
               title: 'Session ID',
               dataIndex: 'sessionId',
-              width: 180,
-              render: (v: string) => <Tag color="purple">{v}</Tag>,
+              width: 200,
+              render: (v: string) => <SessionIdTag value={v} />,
             },
             { title: '类型', dataIndex: 'taskType', width: 90 },
             {
