@@ -26,6 +26,8 @@ export class User extends Model<InferAttributes<User>, InferCreationAttributes<U
   declare lastLoginAt: Date | null;
   declare lastLoginIp: string | null;
   declare remark: string | null;
+  /** Git 密钥（SSH 公钥 / PAT 等），用户自助维护 */
+  declare gitKey: string | null;
   declare delFlag: CreationOptional<number>;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
@@ -50,6 +52,7 @@ User.init(
     lastLoginAt: { type: DataTypes.DATE, allowNull: true },
     lastLoginIp: { type: DataTypes.STRING(50), allowNull: true },
     remark: { type: DataTypes.STRING(255), allowNull: true },
+    gitKey: { type: DataTypes.STRING(500), allowNull: true, comment: 'Git 密钥' },
     delFlag: { type: DataTypes.TINYINT, allowNull: false, defaultValue: 0 },
     createdAt: DataTypes.DATE,
     updatedAt: DataTypes.DATE,

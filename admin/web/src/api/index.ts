@@ -59,8 +59,13 @@ export const userApi = {
   update: (id: number, body: Partial<UserItem>) => http.put<UserItem>(`/users/${id}`, body),
   remove: (id: number) => http.delete<null>(`/users/${id}`),
   resetPassword: (id: number, password: string) => http.put<null>(`/users/${id}/password`, { password }),
-  updateProfile: (body: { nickname: string; email?: string | null; phone?: string | null; gender: number }) =>
-    http.put<UserItem>('/users/profile', body),
+  updateProfile: (body: {
+    nickname: string;
+    email?: string | null;
+    phone?: string | null;
+    gitKey?: string | null;
+    gender: number;
+  }) => http.put<UserItem>('/users/profile', body),
   changePassword: (body: { oldPassword: string; newPassword: string }) =>
     http.put<null>('/users/profile/password', body),
 };

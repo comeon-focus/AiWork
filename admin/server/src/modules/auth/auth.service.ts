@@ -124,6 +124,8 @@ export interface ProfileResult {
     avatar: string | null;
     email: string | null;
     phone: string | null;
+    gitKey: string | null;
+    gender: number;
     deptId: number | null;
     isSuper: boolean;
   };
@@ -166,6 +168,8 @@ export async function getProfile(auth: AuthUser): Promise<ProfileResult> {
       avatar: loaded.user.avatar,
       email: loaded.user.email,
       phone: loaded.user.phone,
+      gitKey: loaded.user.gitKey,
+      gender: loaded.user.gender,
       deptId: loaded.user.deptId,
       isSuper: loaded.auth.isSuper,
     },

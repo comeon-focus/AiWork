@@ -57,7 +57,16 @@ const changePwdSchema = z.object({ oldPassword: z.string().min(1, '请输入原�
 const profileSchema = z.object({
   nickname: z.string().trim().min(1, '昵称必填').max(50),
   email: z.string().trim().email('邮箱格式不正确').max(100).nullish().or(z.literal('')),
-  phone: z.string().trim().max(20).nullish(),
+  // 手机号：留空可不填，填了则按中国大陆手机号规则校验（格式规则待产品最终确认）
+  phone: z
+    .string()
+    .trim()
+    .regex(/^1[3-9]\d{9}$/, '手机号格式不正确')
+    .max(20)
+    .nullish()
+    .or(z.literal('')),
+  // Git 密钥：长度限制待产品最终确认，暂时上限 500 字符
+  gitKey: z.string().trim().max(500, 'Git 密钥不能超过 500 字符').nullish().or(z.literal('')),
   gender: z.coerce.number().int().min(0).max(2).default(0),
 });
 

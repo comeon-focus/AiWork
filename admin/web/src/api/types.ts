@@ -23,6 +23,8 @@ export interface ProfileUser {
   avatar: string | null;
   email: string | null;
   phone: string | null;
+  gitKey: string | null;
+  gender: number;
   deptId: number | null;
   isSuper: boolean;
 }
