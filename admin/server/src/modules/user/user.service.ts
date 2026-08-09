@@ -189,14 +189,21 @@ export async function changeOwnPassword(userId: number, oldPassword: string, new
 
 export async function updateOwnProfile(
   userId: number,
-  input: { nickname: string; email?: string | null; phone?: string | null; gender: number },
+  input: {
+    nickname: string;
+    email?: string | null;
+    phone?: string | null;
+    gitKey?: string | null;
+    gender: number;
+  },
 ) {
   const user = await User.findOne({ where: { id: userId, delFlag: 0 } });
   if (!user) throw ApiError.notFound('用户不存在');
   await user.update({
     nickname: input.nickname,
-    email: input.email ?? null,
-    phone: input.phone ?? null,
+    email: input.email ? input.email : null,
+    phone: input.phone ? input.phone : null,
+    gitKey: input.gitKey ? input.gitKey : null,
     gender: input.gender,
   });
   return user;

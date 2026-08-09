@@ -5,6 +5,7 @@
  *   npm run db:init -- --force 先删除所有表再重建（会清空数据，请谨慎）
  */
 import mysql from 'mysql2/promise';
+import { Op, DataTypes } from 'sequelize';
 import { config } from '../config/index.js';
 import { sequelize } from '../db/index.js';
 import { Dept, User, Role, Menu, CodeRepo, Requirement, UserRole, RoleMenu, RoleDept, RoleCodeRepo } from '../models/index.js';
@@ -182,6 +183,14 @@ const MENU_SEED: MenuSeed[] = [
         perms: 'monitor:operlog:list',
         children: [{ name: '清空操作日志', type: MenuType.BUTTON, perms: 'monitor:operlog:remove' }],
       },
+      {
+        name: '用户信息',
+        type: MenuType.MENU,
+        path: '/monitor/user-info',
+        component: 'monitor/userInfo/index',
+        icon: 'IdcardOutlined',
+        perms: 'monitor:userinfo:view',
+      },
     ],
   },
   {
@@ -340,12 +349,63 @@ function pickMenuIds(names: string[]): number[] {
   });
 }
 
+/* ── 增量补齐：兼容已在运行的数据库，无需 --force 重建 ── */
+
+/** 确保「用户信息」菜单存在并授权给所有非超级管理员角色（超管自动拥有全部菜单） */
+async function ensureUserInfoMenu() {
+  const parent = await Menu.findOne({ where: { name: '系统监控', type: MenuType.CATALOG } });
+  if (!parent) return; // 系统监控目录缺失则不处理
+
+  const [menu] = await Menu.findOrCreate({
+    where: { name: '用户信息', parentId: parent.id },
+    defaults: {
+      parentId: parent.id,
+      name: '用户信息',
+      type: MenuType.MENU,
+      path: '/monitor/user-info',
+      component: 'monitor/userInfo/index',
+      perms: 'monitor:userinfo:view',
+      icon: 'IdcardOutlined',
+      sort: 3,
+      visible: 1,
+      status: 1,
+      keepAlive: 0,
+      redirect: null,
+    },
+  });
+
+  const roles = await Role.findAll({ where: { roleKey: { [Op.ne]: 'admin' } } });
+  for (const role of roles) {
+    const exists = await RoleMenu.findOne({ where: { roleId: role.id, menuId: menu.id } });
+    if (!exists) await RoleMenu.create({ roleId: role.id, menuId: menu.id });
+  }
+  console.log('[db:init] 用户信息菜单已就绪');
+}
+
+/** 确保 sys_user 已包含 git_key 字段（模型已声明，此处补齐存量库） */
+async function ensureUserGitKeyColumn() {
+  const qi = sequelize.getQueryInterface();
+  const cols = await qi.describeTable('sys_user');
+  if (!cols.git_key) {
+    await qi.addColumn('sys_user', 'git_key', {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+      comment: 'Git 密钥',
+    });
+    console.log('[db:init] 已为 sys_user 新增 git_key 字段');
+  }
+}
+
 /* ── 主流程 ───────────────────────────────────────── */
 async function main() {
   await ensureDatabase();
 
   await sequelize.sync({ force });
   console.log(force ? '[db:init] 已删除并重建全部数据表' : '[db:init] 数据表已同步');
+
+  // 增量补齐：存量库不会走下面的种子分支，这里保证新菜单与字段列一定存在
+  await ensureUserGitKeyColumn();
+  await ensureUserInfoMenu();
 
   const existing = await User.count();
   if (existing > 0 && !force) {
@@ -390,6 +450,7 @@ async function main() {
       '部门管理',
       '系统监控',
       '登录日志',
+      '用户信息',
       '数据模拟',
     ]).map((menuId) => ({ roleId: managerRole.id, menuId })),
   );
@@ -404,7 +465,7 @@ async function main() {
     remark: '只能看到自己的数据',
   });
   await RoleMenu.bulkCreate(
-    pickMenuIds(['首页', '系统管理', '用户管理']).map((menuId) => ({ roleId: staffRole.id, menuId })),
+    pickMenuIds(['首页', '系统管理', '用户管理', '用户信息']).map((menuId) => ({ roleId: staffRole.id, menuId })),
   );
 
   // 角色四：自定义范围，演示 sys_role_dept
@@ -417,7 +478,7 @@ async function main() {
     remark: '数据范围为手工指定的部门集合',
   });
   await RoleMenu.bulkCreate(
-    pickMenuIds(['首页', '系统管理', '用户管理']).map((menuId) => ({ roleId: customRole.id, menuId })),
+    pickMenuIds(['首页', '系统管理', '用户管理', '用户信息']).map((menuId) => ({ roleId: customRole.id, menuId })),
   );
   await RoleDept.bulkCreate(
     [deptIds.get('前端组')!, deptIds.get('市场部')!].map((deptId) => ({ roleId: customRole.id, deptId })),
