@@ -9,8 +9,13 @@ import {
 } from '../../models/index.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { taskWorkspaceDir, hasUncommittedChanges } from '../../utils/git.js';
-import { runAICoding } from '../../utils/codebuddy.js';
-import { isTaskLocked, activeCodingParentCount } from '../aiTask/aiTask.service.js';
+import {
+  isTaskLocked,
+  activeCodingParentCount,
+  startAicodingRun,
+  buildAicodingPrompt,
+  type AicodingActor,
+} from '../aiTask/aiTask.service.js';
 
 export interface AiSubTaskInput {
   parentId: number;
@@ -108,7 +113,7 @@ export async function removeAiSubTask(id: number) {
 }
 
 /** 启动子任务 AICoding：复用父任务 sessionId 会话（共享对话上下文），基于子任务自身关联智能文档改代码 */
-export async function aicodingAiSubTask(id: number) {
+export async function aicodingAiSubTask(id: number, actor?: AicodingActor | null) {
   const sub = await AiSubTask.findByPk(id, { include: [{ model: AITask, as: 'parent' }] });
   if (!sub) throw ApiError.notFound('AI子任务不存在');
   const parent = (sub as unknown as { parent?: AITask }).parent!;
@@ -126,20 +131,25 @@ export async function aicodingAiSubTask(id: number) {
     throw ApiError.badRequest('最多允许两个任务同时进行 AICoding，请稍后再试');
   }
 
-  await sub.update({ codingStatus: '编译中' });
-  const prompt = `根据以下智能需求描述文档，在当前代码库中进行相应的代码修改：\n\n${sd.content}`;
-  runAICoding(sessionId, prompt, taskWorkspaceDir(sessionId), (code) => {
-    AiSubTask.findByPk(id)
-      .then((s) => {
-        if (!s) return;
-        if (code === 0) {
-          return s.update({ codingStatus: '编译成功', codingError: null });
-        }
-        const reason = code === null ? 'codebuddy 启动失败' : `codebuddy 进程退出码 ${code}`;
-        return s.update({ codingStatus: '编译失败', codingError: reason });
-      })
-      .catch(() => undefined);
-    if (code !== 0) console.error(`[aicoding] 子任务 ${id} codebuddy 退出码 ${code}`);
-  });
+  await sub.update({ codingStatus: '编译中', codingError: null });
+  const repoDir = taskWorkspaceDir(sessionId);
+  const prompt = buildAicodingPrompt(repoDir, sd.content);
+  try {
+    await startAicodingRun({
+      sessionId,
+      repoDir,
+      taskId: parent.id,
+      subTaskId: sub.id,
+      taskType: '子任务',
+      title: sub.title,
+      smartDocId: sub.smartDocId,
+      branch: sub.branch ?? parent.branch,
+      prompt,
+      actor,
+    });
+  } catch (e) {
+    await sub.update({ codingStatus: '编译失败', codingError: (e as Error).message });
+    throw ApiError.badRequest(`AICoding 启动失败：${(e as Error).message}`);
+  }
   return { codingStatus: '编译中' as AicodingStatus };
 }

@@ -253,6 +253,84 @@ export interface AiSubTaskInput {
   status?: AITaskStatus;
 }
 
+/* ── 编译详情 ─────────────────────────── */
+
+export type AiCompileStatus = '编译中' | '编译成功' | '编译失败';
+
+export const AI_COMPILE_STATUS: AiCompileStatus[] = ['编译中', '编译成功', '编译失败'];
+
+export const AI_COMPILE_STATUS_COLOR: Record<AiCompileStatus, string> = {
+  编译中: 'processing',
+  编译成功: 'success',
+  编译失败: 'error',
+};
+
+/** 一次 AICoding 的编译记录（列表接口不含 content/prompt/changedDetail 等大字段） */
+export interface AiCompileLogItem {
+  id: number;
+  /** 关联的任务会话 ID，父子任务共享 */
+  sessionId: string;
+  taskId: number;
+  subTaskId: number | null;
+  taskType: '父任务' | '子任务';
+  /** 与发起方任务标题一致 */
+  title: string;
+  smartDocId: number | null;
+  branch: string | null;
+  model: string | null;
+  status: AiCompileStatus;
+  errorMsg: string | null;
+  contentChars: number;
+  lineCount: number;
+  /** 日志超出上限被截断 */
+  truncated: boolean;
+  exitCode: number | null;
+  resultSubtype: string | null;
+  durationMs: number | null;
+  numTurns: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  toolCalls: number;
+  /** git 实测改动文件数；null 表示 git 校验失败 */
+  changedFiles: number | null;
+  headBefore: string | null;
+  headAfter: string | null;
+  commitsAhead: number | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  creatorId: number | null;
+  creatorName: string | null;
+  createdAt: string;
+}
+
+/** 增量拉取日志尾部的返回结构；offset 单位为 Unicode 码点，由服务端权威给出 */
+export interface AiCompileLogTail {
+  id: number;
+  status: AiCompileStatus;
+  running: boolean;
+  offset: number;
+  nextOffset: number;
+  total: number;
+  chunk: string;
+  hasMore: boolean;
+  /** 服务端判定 offset 失效，前端需清空已有内容重新累积 */
+  reset: boolean;
+  truncated: boolean;
+  lineCount: number;
+  errorMsg: string | null;
+  finishedAt: string | null;
+  changedFiles: number | null;
+  changedDetail: string | null;
+  exitCode: number | null;
+  resultSubtype: string | null;
+  durationMs: number | null;
+  numTurns: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  toolCalls: number;
+  commitsAhead: number | null;
+}
+
 /** 智能文档：需求经 AI 润色后生成的 Markdown 文档 */
 export interface SmartDocItem {
   id: number;

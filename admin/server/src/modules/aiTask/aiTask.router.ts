@@ -112,7 +112,8 @@ router.post(
   validate(idSchema, 'params'),
   async (req, res) => {
     const { id } = req.params as unknown as z.infer<typeof idSchema>;
-    ok(res, await service.aicodingAITask(id), 'AICoding 已启动');
+    const auth = req.user!;
+    ok(res, await service.aicodingAITask(id, { id: auth.id, nickname: auth.nickname }), 'AICoding 已启动');
   },
 );
 

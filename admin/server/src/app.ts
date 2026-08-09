@@ -14,6 +14,7 @@ import smartDocRouter from './modules/smartDoc/smartDoc.router.js';
 import demandRouter from './modules/demand/demand.router.js';
 import aiTaskRouter from './modules/aiTask/aiTask.router.js';
 import aiSubTaskRouter from './modules/aiSubTask/aiSubTask.router.js';
+import aiCompileLogRouter from './modules/aiCompileLog/aiCompileLog.router.js';
 import dataSimRouter from './modules/dataSim/dataSim.router.js';
 import dataSimInterfaceRouter from './modules/dataSim/dataSimInterface.router.js';
 import dataTaskRouter from './modules/dataTask/dataTask.router.js';
@@ -50,6 +51,7 @@ export function createApp() {
   app.use('/api/demands', authenticate, demandRouter);
   app.use('/api/ai-tasks', authenticate, aiTaskRouter);
   app.use('/api/ai-sub-tasks', authenticate, aiSubTaskRouter);
+  app.use('/api/ai-compile-logs', authenticate, aiCompileLogRouter);
   app.use('/api/data-sim', authenticate, dataSimRouter);
   app.use('/api/data-sim-interfaces', authenticate, dataSimInterfaceRouter);
   app.use('/api/data-tasks', authenticate, dataTaskRouter);

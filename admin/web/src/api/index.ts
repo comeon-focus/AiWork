@@ -6,6 +6,9 @@ import type {
   AicodingStatus,
   AiSubTaskItem,
   AiSubTaskInput,
+  AiCompileLogItem,
+  AiCompileLogTail,
+  AiCompileStatus,
   CodeRepoItem,
   DataSimProjectItem,
   DataSimInterfaceItem,
@@ -141,6 +144,22 @@ export const aiSubTaskApi = {
     http.patch<AiSubTaskItem>(`/ai-sub-tasks/${id}/status`, { status }),
   aicoding: (id: number) => http.post<{ codingStatus: AicodingStatus }>(`/ai-sub-tasks/${id}/aicoding`),
   remove: (id: number) => http.delete<null>(`/ai-sub-tasks/${id}`),
+};
+
+export const aiCompileLogApi = {
+  list: (params?: {
+    title?: string;
+    sessionId?: string;
+    status?: AiCompileStatus;
+    taskId?: number;
+    page?: number;
+    pageSize?: number;
+  }) => http.get<PageResult<AiCompileLogItem>>('/ai-compile-logs', params),
+  detail: (id: number) => http.get<AiCompileLogItem>(`/ai-compile-logs/${id}`),
+  /** 增量拉日志：offset 传上一次返回的 nextOffset */
+  tail: (id: number, offset: number) =>
+    http.get<AiCompileLogTail>(`/ai-compile-logs/${id}/tail`, { offset }),
+  remove: (id: number) => http.delete<null>(`/ai-compile-logs/${id}`),
 };
 
 export const smartDocApi = {

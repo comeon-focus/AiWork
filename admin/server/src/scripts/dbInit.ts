@@ -250,6 +250,17 @@ const MENU_SEED: MenuSeed[] = [
           { name: '删除任务', type: MenuType.BUTTON, perms: 'orchestration:aiTask:remove' },
         ],
       },
+      {
+        name: '编译详情',
+        type: MenuType.MENU,
+        path: '/ai-orchestration/compile-log',
+        component: 'aiOrchestration/compileLog/index',
+        icon: 'FileSearchOutlined',
+        perms: 'orchestration:compileLog:list',
+        children: [
+          { name: '删除记录', type: MenuType.BUTTON, perms: 'orchestration:compileLog:remove' },
+        ],
+      },
     ],
   },
   {

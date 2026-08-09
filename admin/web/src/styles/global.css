@@ -154,3 +154,23 @@ body {
   height: 100% !important;
   flex: 1;
 }
+
+/* 编译详情：终端风格日志面板 */
+.compile-log {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 12px;
+  border-radius: 6px;
+  height: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+.compile-log:empty::before {
+  content: '暂无日志输出';
+  color: #6a6a6a;
+}

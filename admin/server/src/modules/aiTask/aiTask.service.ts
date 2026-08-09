@@ -8,6 +8,7 @@ import {
   AI_TASK_STATUS,
   type AITaskStatus,
   type AicodingStatus,
+  type AiCompileTaskType,
 } from '../../models/index.js';
 import { generateProjectId } from '../dataSim/dataSim.service.js';
 import { ApiError } from '../../utils/ApiError.js';
@@ -20,8 +21,15 @@ import {
   hasUncommittedChanges,
   removeWorkspaceDir,
   clearCodebuddySession,
+  snapshotRepo,
+  diffRepoSince,
 } from '../../utils/git.js';
-import { runAICoding } from '../../utils/codebuddy.js';
+import { runAICoding, resolveModel } from '../../utils/codebuddy.js';
+import {
+  startCompileLog,
+  appendCompileLine,
+  finishCompileLog,
+} from '../aiCompileLog/aiCompileLog.service.js';
 
 export interface AITaskInput {
   title: string;
@@ -225,8 +233,101 @@ export async function isTaskLocked(parentId: number): Promise<boolean> {
   return !!sub;
 }
 
+/* ── AICoding 执行流程 ─────────────────────────── */
+
+/** 触发人，用于编译记录归属 */
+export interface AicodingActor {
+  id: number;
+  nickname: string;
+}
+
+export interface StartRunInput {
+  sessionId: string;
+  repoDir: string;
+  taskId: number;
+  /** 为 null 表示父任务自身发起 */
+  subTaskId: number | null;
+  taskType: AiCompileTaskType;
+  title: string;
+  smartDocId: number | null;
+  branch: string | null;
+  prompt: string;
+  actor?: AicodingActor | null;
+}
+
+/**
+ * 组装 AICoding 提示词。
+ * 必须显式圈定工作目录：codebuddy 以 bypassPermissions 运行，Bash 工具不受 --add-dir 约束，
+ * 实测它会顺着绝对路径读到工作区外的真实项目目录（进而有改错仓库的风险）。
+ */
+export function buildAicodingPrompt(repoDir: string, docContent: string): string {
+  return [
+    `你的工作目录严格限定为 ${repoDir}，只允许读写该目录内的文件。`,
+    '禁止访问或修改该目录以外的任何路径，即使它看起来是同一个项目。',
+    '',
+    '根据以下智能需求描述文档，在该代码库中进行相应的代码修改：',
+    '',
+    docContent,
+  ].join('\n');
+}
+
+/** 把终态回写到发起方（父任务或子任务）那张表 */
+async function writeBackCodingStatus(input: StartRunInput, status: AicodingStatus, error: string | null) {
+  const patch = { codingStatus: status, codingError: error };
+  if (input.subTaskId) {
+    await AiSubTask.update(patch, { where: { id: input.subTaskId } });
+  } else {
+    await AITask.update(patch, { where: { id: input.taskId } });
+  }
+}
+
+/**
+ * 父/子任务共用的 AICoding 启动流程：
+ * 拍 git 快照 → 建编译记录 → 子进程流式写日志 → 结束后比对 git 并回写终态。
+ * 二者唯一的差异是终态写回哪张表。
+ */
+export async function startAicodingRun(input: StartRunInput): Promise<void> {
+  const before = await snapshotRepo(input.repoDir);
+  const log = await startCompileLog({
+    sessionId: input.sessionId,
+    taskId: input.taskId,
+    subTaskId: input.subTaskId,
+    taskType: input.taskType,
+    title: input.title,
+    smartDocId: input.smartDocId,
+    branch: input.branch ?? before.branch,
+    model: resolveModel(),
+    prompt: input.prompt,
+    headBefore: before.head,
+    creatorId: input.actor?.id ?? null,
+    creatorName: input.actor?.nickname ?? null,
+  });
+
+  runAICoding(input.sessionId, input.prompt, input.repoDir, {
+    onLine: (line) => appendCompileLine(log.id, line),
+    onDone: (result) => {
+      void (async () => {
+        try {
+          const change = await diffRepoSince(input.repoDir, before);
+          // 声称成功却零改动：把线索留在日志里，历史 bug（prompt 被吞、空跑）正是这个形态
+          if (result.ok && change.changedFiles === 0) {
+            appendCompileLine(log.id, '[--:--:--] SYS    ⚠ 本次运行结束，但 git 检测到代码零改动');
+          }
+          await finishCompileLog(log.id, result, change);
+          await writeBackCodingStatus(input, result.ok ? '编译成功' : '编译失败', result.reason);
+          if (!result.ok) console.error(`[aicoding] 编译失败 log=${log.id}：${result.reason}`);
+        } catch (e) {
+          console.error(`[aicoding] 收尾失败 log=${log.id}:`, (e as Error).message);
+          // 收尾异常也必须解锁任务，否则 isTaskLocked 会把任务永久锁死
+          await writeBackCodingStatus(input, '编译失败', '编译结果写入失败').catch(() => undefined);
+        }
+      })();
+    },
+  });
+}
+
 /** 启动父任务 AICoding：调用 codebuddy 基于关联智能文档在代码库下改代码 */
-export async function aicodingAITask(id: number) {
+export async function aicodingAITask(id: number, actor?: AicodingActor | null) {
   const task = await AITask.findByPk(id);
   if (!task) throw ApiError.notFound('AI任务不存在');
   if (task.status === '已结束') throw ApiError.badRequest('已结束的任务不能启动 AICoding');
@@ -242,20 +343,26 @@ export async function aicodingAITask(id: number) {
     throw ApiError.badRequest('最多允许两个任务同时进行 AICoding，请稍后再试');
   }
 
-  await task.update({ codingStatus: '编译中' });
-  const prompt = `根据以下智能需求描述文档，在当前代码库中进行相应的代码修改：\n\n${sd.content}`;
-  runAICoding(sessionId, prompt, taskWorkspaceDir(sessionId), (code) => {
-    AITask.findByPk(id)
-      .then((t) => {
-        if (!t) return;
-        if (code === 0) {
-          return t.update({ codingStatus: '编译成功', codingError: null });
-        }
-        const reason = code === null ? 'codebuddy 启动失败' : `codebuddy 进程退出码 ${code}`;
-        return t.update({ codingStatus: '编译失败', codingError: reason });
-      })
-      .catch(() => undefined);
-    if (code !== 0) console.error(`[aicoding] AI 任务 ${id} codebuddy 退出码 ${code}`);
-  });
+  await task.update({ codingStatus: '编译中', codingError: null });
+  const repoDir = taskWorkspaceDir(sessionId);
+  const prompt = buildAicodingPrompt(repoDir, sd.content);
+  try {
+    await startAicodingRun({
+      sessionId,
+      repoDir,
+      taskId: task.id,
+      subTaskId: null,
+      taskType: '父任务',
+      title: task.title,
+      smartDocId: task.smartDocId,
+      branch: task.branch,
+      prompt,
+      actor,
+    });
+  } catch (e) {
+    // 起不来就地解锁，别让任务卡在「编译中」
+    await task.update({ codingStatus: '编译失败', codingError: (e as Error).message });
+    throw ApiError.badRequest(`AICoding 启动失败：${(e as Error).message}`);
+  }
   return { codingStatus: '编译中' as AicodingStatus };
 }

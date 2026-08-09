@@ -13,6 +13,13 @@ import { RequirementFile } from './requirementFile.js';
 import { SmartDoc } from './smartDoc.js';
 import { AITask, AI_TASK_STATUS, AI_CODING_STATUS, type AITaskStatus, type AicodingStatus } from './aiTask.js';
 import { AiSubTask } from './aiSubTask.js';
+import {
+  AiCompileLog,
+  AI_COMPILE_STATUS,
+  AI_COMPILE_TASK_TYPE,
+  type AiCompileStatus,
+  type AiCompileTaskType,
+} from './aiCompileLog.js';
 import { Demand, DEMAND_STATUS, type DemandStatus } from './demand.js';
 import { DemandFile } from './demandFile.js';
 import { RequirementDemand } from './requirementDemand.js';
@@ -117,6 +124,11 @@ export {
   AI_CODING_STATUS,
   type AicodingStatus,
   AiSubTask,
+  AiCompileLog,
+  AI_COMPILE_STATUS,
+  type AiCompileStatus,
+  AI_COMPILE_TASK_TYPE,
+  type AiCompileTaskType,
   Demand,
   DemandFile,
   RequirementDemand,
