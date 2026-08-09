@@ -11,6 +11,13 @@ import type {
 import { AI_TASK_STATUS } from '@/api/types';
 import { Auth } from '@/components/Auth';
 
+/** AI 任务状态对应 Tag 颜色 */
+const AI_TASK_STATUS_COLOR: Record<AITaskStatus, string> = {
+  待开始: 'default',
+  进行中: 'processing',
+  已结束: 'success',
+};
+
 interface FormValues {
   title: string;
   summary?: string;
@@ -43,21 +50,40 @@ function SubTaskModal({
   const [list, setList] = useState<AiSubTaskItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [total, setTotal] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<AiSubTaskItem | null>(null);
   const [viewOnly, setViewOnly] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [statusTarget, setStatusTarget] = useState<AiSubTaskItem | null>(null);
+  const [statusValue, setStatusValue] = useState<AITaskStatus>('待开始');
   const [form] = Form.useForm<SubFormValues>();
   /** 父任务已结束时，子任务内容禁止编辑 */
   const locked = parent.status === '已结束';
 
-  const load = useCallback(async (title?: string) => {
-    setLoading(true);
-    try {
-      setList(await aiSubTaskApi.list(parent.id, title ? { title } : undefined));
-    } finally {
-      setLoading(false);
-    }
-  }, [parent.id]);
+  const load = useCallback(
+    async (next?: { title?: string; page?: number; pageSize?: number }) => {
+      setLoading(true);
+      try {
+        const p = next?.page ?? page;
+        const ps = next?.pageSize ?? pageSize;
+        const resp = await aiSubTaskApi.list(parent.id, {
+          ...(next?.title !== undefined ? { title: next.title } : {}),
+          page: p,
+          pageSize: ps,
+        });
+        setList(resp.list);
+        setTotal(resp.total);
+        setPage(p);
+        setPageSize(ps);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [parent.id, page, pageSize],
+  );
 
   useEffect(() => {
     if (open) void load();
@@ -111,19 +137,27 @@ function SubTaskModal({
     }
     message.success(editing ? '修改成功' : '新增成功');
     setModalOpen(false);
-    void load(keyword);
+    void load({ page: 1 });
   };
 
-  const changeStatus = async (id: number, status: AITaskStatus) => {
-    await aiSubTaskApi.updateStatus(id, status);
+  const openStatusModal = (record: AiSubTaskItem) => {
+    setStatusTarget(record);
+    setStatusValue(record.status);
+    setStatusOpen(true);
+  };
+
+  const submitStatus = async () => {
+    if (!statusTarget) return;
+    await aiSubTaskApi.updateStatus(statusTarget.id, statusValue);
     message.success('状态已更新');
-    void load(keyword);
+    setStatusOpen(false);
+    void load();
   };
 
   const remove = async (id: number) => {
     await aiSubTaskApi.remove(id);
     message.success('删除成功');
-    void load(keyword);
+    void load();
   };
 
   return (
@@ -149,17 +183,17 @@ function SubTaskModal({
             allowClear
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            onPressEnter={() => load(keyword)}
+            onPressEnter={() => load({ title: keyword, page: 1 })}
             style={{ width: 200 }}
           />
-          <Button type="primary" icon={<SearchOutlined />} onClick={() => load(keyword)}>
+          <Button type="primary" icon={<SearchOutlined />} onClick={() => load({ title: keyword, page: 1 })}>
             查询
           </Button>
           <Button
             icon={<ReloadOutlined />}
             onClick={() => {
               setKeyword('');
-              void load();
+              void load({ page: 1 });
             }}
           >
             重置
@@ -177,7 +211,14 @@ function SubTaskModal({
         size="small"
         loading={loading}
         dataSource={list}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 条`,
+          onChange: (p, ps) => load({ page: p, pageSize: ps }),
+        }}
         columns={[
           { title: '任务标题', dataIndex: 'title', width: 180 },
           {
@@ -189,25 +230,21 @@ function SubTaskModal({
           {
             title: '任务状态',
             dataIndex: 'status',
-            width: 140,
-            render: (v: AITaskStatus, record) => (
-              <Select<AITaskStatus>
-                size="small"
-                value={v}
-                disabled={locked}
-                style={{ width: '100%' }}
-                options={AI_TASK_STATUS.map((s) => ({ label: s, value: s }))}
-                onChange={(status) => changeStatus(record.id, status)}
-              />
-            ),
+            width: 120,
+            render: (v: AITaskStatus) => <Tag color={AI_TASK_STATUS_COLOR[v] ?? 'default'}>{v}</Tag>,
           },
           { title: '创建人', dataIndex: 'creatorName', width: 100, render: (v: string | null) => v || '-' },
           { title: '创建时间', dataIndex: 'createdAt', width: 170 },
           {
             title: '操作',
-            width: 150,
+            width: 220,
             render: (_, record) => (
               <Space size={4}>
+                <Auth perms="orchestration:aiTask:edit">
+                  <Button type="link" size="small" disabled={locked} onClick={() => openStatusModal(record)}>
+                    修改状态
+                  </Button>
+                </Auth>
                 <Auth perms="orchestration:aiTask:edit">
                   <Button
                     type="link"
@@ -269,6 +306,27 @@ function SubTaskModal({
           </Form.Item>
         </Form>
       </Modal>
+
+      <Modal
+        open={statusOpen}
+        title="修改任务状态"
+        onCancel={() => setStatusOpen(false)}
+        onOk={submitStatus}
+        destroyOnHidden
+      >
+        <div style={{ marginBottom: 12 }}>
+          当前子任务：<b>{statusTarget?.title}</b>
+        </div>
+        <Select
+          style={{ width: '100%' }}
+          value={statusValue}
+          onChange={(v) => setStatusValue(v)}
+          options={AI_TASK_STATUS.map((s) => ({ label: s, value: s }))}
+        />
+        <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>
+          状态改为「已结束」后子任务将锁定，不可再修改。
+        </div>
+      </Modal>
     </>
   );
 }
@@ -277,22 +335,45 @@ export default function AiTaskPage() {
   const [data, setData] = useState<AITaskItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
+  const [statusFilter, setStatusFilter] = useState<AITaskStatus | undefined>();
+  const [docFilter, setDocFilter] = useState<number | undefined>();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [total, setTotal] = useState(0);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<AITaskItem | null>(null);
   const [viewOnly, setViewOnly] = useState(false);
   const [docOptions, setDocOptions] = useState<SmartDocItem[]>([]);
   const [subParent, setSubParent] = useState<AITaskItem | null>(null);
   const [subOpen, setSubOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [statusTarget, setStatusTarget] = useState<AITaskItem | null>(null);
+  const [statusValue, setStatusValue] = useState<AITaskStatus>('待开始');
   const [form] = Form.useForm<FormValues>();
 
-  const load = useCallback(async (title?: string) => {
-    setLoading(true);
-    try {
-      setData(await aiTaskApi.list(title ? { title } : undefined));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (next?: { page?: number; pageSize?: number }) => {
+      setLoading(true);
+      try {
+        const p = next?.page ?? page;
+        const ps = next?.pageSize ?? pageSize;
+        const resp = await aiTaskApi.list({
+          ...(keyword ? { title: keyword } : {}),
+          ...(statusFilter ? { status: statusFilter } : {}),
+          ...(docFilter ? { smartDocId: docFilter } : {}),
+          page: p,
+          pageSize: ps,
+        });
+        setData(resp.list);
+        setTotal(resp.total);
+        setPage(p);
+        setPageSize(ps);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [keyword, statusFilter, docFilter, page, pageSize],
+  );
 
   useEffect(() => {
     void load();
@@ -337,19 +418,27 @@ export default function AiTaskPage() {
     }
     message.success(editing ? '修改成功' : '新增成功');
     setOpen(false);
-    void load(keyword);
+    void load();
   };
 
-  const changeStatus = async (id: number, status: AITaskStatus) => {
-    await aiTaskApi.updateStatus(id, status);
+  const openStatusModal = (record: AITaskItem) => {
+    setStatusTarget(record);
+    setStatusValue(record.status);
+    setStatusOpen(true);
+  };
+
+  const submitStatus = async () => {
+    if (!statusTarget) return;
+    await aiTaskApi.updateStatus(statusTarget.id, statusValue);
     message.success('状态已更新');
-    void load(keyword);
+    setStatusOpen(false);
+    void load();
   };
 
   const remove = async (id: number) => {
     await aiTaskApi.remove(id);
     message.success('删除成功');
-    void load(keyword);
+    void load();
   };
 
   const openSubModal = (record: AITaskItem) => {
@@ -374,17 +463,37 @@ export default function AiTaskPage() {
             allowClear
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            onPressEnter={() => load(keyword)}
+            onPressEnter={() => load()}
             style={{ width: 200 }}
           />
-          <Button type="primary" icon={<SearchOutlined />} onClick={() => load(keyword)}>
+          <Select
+            placeholder="任务状态"
+            allowClear
+            value={statusFilter}
+            onChange={(v) => setStatusFilter(v)}
+            options={AI_TASK_STATUS.map((s) => ({ label: s, value: s }))}
+            style={{ width: 140 }}
+          />
+          <Select
+            placeholder="智能文档"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            value={docFilter}
+            onChange={(v) => setDocFilter(v)}
+            options={docOptions.map((d) => ({ label: d.title, value: d.id }))}
+            style={{ width: 200 }}
+          />
+          <Button type="primary" icon={<SearchOutlined />} onClick={() => load({ page: 1 })}>
             查询
           </Button>
           <Button
             icon={<ReloadOutlined />}
             onClick={() => {
               setKeyword('');
-              void load();
+              setStatusFilter(undefined);
+              setDocFilter(undefined);
+              void load({ page: 1 });
             }}
           >
             重置
@@ -407,7 +516,14 @@ export default function AiTaskPage() {
           rowKey="id"
           loading={loading}
           dataSource={data}
-          pagination={false}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            showTotal: (t) => `共 ${t} 条`,
+            onChange: (p, ps) => load({ page: p, pageSize: ps }),
+          }}
           columns={[
             { title: '任务标题', dataIndex: 'title', width: 200 },
             {
@@ -426,27 +542,24 @@ export default function AiTaskPage() {
             {
               title: '任务状态',
               dataIndex: 'status',
-              width: 160,
-              render: (v: AITaskStatus, record) => (
-                <Select<AITaskStatus>
-                  size="small"
-                  value={v}
-                  style={{ width: '100%' }}
-                  options={AI_TASK_STATUS.map((s) => ({ label: s, value: s }))}
-                  onChange={(status) => changeStatus(record.id, status)}
-                />
-              ),
+              width: 120,
+              render: (v: AITaskStatus) => <Tag color={AI_TASK_STATUS_COLOR[v] ?? 'default'}>{v}</Tag>,
             },
             { title: '创建人', dataIndex: 'creatorName', width: 120, render: (v: string | null) => v || '-' },
             { title: '创建时间', dataIndex: 'createdAt', width: 180 },
             {
               title: '操作',
-              width: 230,
+              width: 290,
               render: (_, record) => (
                 <Space size={4}>
                   <Auth perms="orchestration:aiTask:list">
                     <Button type="link" size="small" onClick={() => openSubModal(record)}>
                       子任务
+                    </Button>
+                  </Auth>
+                  <Auth perms="orchestration:aiTask:edit">
+                    <Button type="link" size="small" onClick={() => openStatusModal(record)}>
+                      修改状态
                     </Button>
                   </Auth>
                   <Auth perms="orchestration:aiTask:edit">
@@ -516,6 +629,27 @@ export default function AiTaskPage() {
             <Select options={AI_TASK_STATUS.map((s) => ({ label: s, value: s }))} disabled={viewOnly} />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        open={statusOpen}
+        title="修改任务状态"
+        onCancel={() => setStatusOpen(false)}
+        onOk={submitStatus}
+        destroyOnHidden
+      >
+        <div style={{ marginBottom: 12 }}>
+          当前任务：<b>{statusTarget?.title}</b>
+        </div>
+        <Select
+          style={{ width: '100%' }}
+          value={statusValue}
+          onChange={(v) => setStatusValue(v)}
+          options={AI_TASK_STATUS.map((s) => ({ label: s, value: s }))}
+        />
+        <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>
+          状态改为「已结束」后任务将锁定，编辑按钮变为查看，且不可再修改。
+        </div>
       </Modal>
     </>
   );

@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { validate } from '../../middleware/validate.js';
 import { requirePerms } from '../../middleware/perms.js';
 import { operLog } from '../../middleware/operLog.js';
-import { ok } from '../../utils/response.js';
+import { ok, page } from '../../utils/response.js';
+import { parsePaging } from '../../utils/request.js';
 import { AI_TASK_STATUS } from '../../models/index.js';
 import * as service from './aiTask.service.js';
 
@@ -21,6 +22,10 @@ const statusSchema = z.object({ status: z.enum(AI_TASK_STATUS) });
 
 const querySchema = z.object({
   title: z.string().trim().optional(),
+  status: z.enum(AI_TASK_STATUS).optional(),
+  smartDocId: z.coerce.number().int().positive().optional(),
+  page: z.coerce.number().int().optional(),
+  pageSize: z.coerce.number().int().optional(),
 });
 
 const idSchema = z.object({ id: z.coerce.number().int().positive() });
@@ -30,8 +35,16 @@ router.get(
   requirePerms('orchestration:aiTask:list'),
   validate(querySchema, 'query'),
   async (req, res) => {
-    const q = req.query as z.infer<typeof querySchema>;
-    ok(res, await service.listAiTasks({ title: q.title }));
+    const q = req.query as unknown as z.infer<typeof querySchema>;
+    const paging = parsePaging(q);
+    const { rows, count } = await service.listAiTasks({
+      title: q.title,
+      status: q.status,
+      smartDocId: q.smartDocId,
+      offset: paging.offset,
+      limit: paging.limit,
+    });
+    page(res, rows, count, paging.page, paging.pageSize);
   },
 );
 

@@ -18,15 +18,24 @@ export interface AiSubTaskInput {
   creatorName?: string | null;
 }
 
-export async function listAiSubTasks(filter: { parentId: number; title?: string }) {
+export async function listAiSubTasks(filter: {
+  parentId: number;
+  title?: string;
+  offset?: number;
+  limit?: number;
+}) {
   const where: Record<string, unknown> = { parentId: filter.parentId };
   if (filter.title) where.title = { [Op.like]: `%${filter.title}%` };
 
-  return AiSubTask.findAll({
+  const { rows, count } = await AiSubTask.findAndCountAll({
     where,
+    offset: filter.offset,
+    limit: filter.limit,
     order: [['id', 'DESC']],
+    distinct: true,
     include: [{ model: SmartDoc, as: 'smartDoc', attributes: ['id', 'title'], required: false }],
   });
+  return { rows, count };
 }
 
 export async function createAiSubTask(input: AiSubTaskInput) {

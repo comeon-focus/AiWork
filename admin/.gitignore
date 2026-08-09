@@ -7,3 +7,7 @@ dist/
 
 # 运行时上传的文件（代码库/需求附件）
 server/uploads/
+
+# AI 任务拉取的代码库工作区
+server/AiWorkSpace/
+AiWorkSpace/

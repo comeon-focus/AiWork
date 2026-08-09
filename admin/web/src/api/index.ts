@@ -121,7 +121,8 @@ export const demandApi = {
 };
 
 export const aiTaskApi = {
-  list: (params?: { title?: string }) => http.get<AITaskItem[]>('/ai-tasks', params),
+  list: (params?: { title?: string; status?: AITaskStatus; smartDocId?: number; page?: number; pageSize?: number }) =>
+    http.get<PageResult<AITaskItem>>('/ai-tasks', params),
   create: (body: AITaskInput) => http.post<AITaskItem>('/ai-tasks', body),
   update: (id: number, body: AITaskInput) => http.put<AITaskItem>(`/ai-tasks/${id}`, body),
   updateStatus: (id: number, status: AITaskStatus) =>
@@ -130,8 +131,8 @@ export const aiTaskApi = {
 };
 
 export const aiSubTaskApi = {
-  list: (parentId: number, params?: { title?: string }) =>
-    http.get<AiSubTaskItem[]>('/ai-sub-tasks', { parentId, ...params }),
+  list: (parentId: number, params?: { title?: string; page?: number; pageSize?: number }) =>
+    http.get<PageResult<AiSubTaskItem>>('/ai-sub-tasks', { parentId, ...params }),
   create: (body: AiSubTaskInput) => http.post<AiSubTaskItem>('/ai-sub-tasks', body),
   update: (id: number, body: AiSubTaskInput) => http.put<AiSubTaskItem>(`/ai-sub-tasks/${id}`, body),
   updateStatus: (id: number, status: AITaskStatus) =>
