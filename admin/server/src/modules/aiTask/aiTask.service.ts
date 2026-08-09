@@ -188,6 +188,12 @@ export async function removeAiTask(id: number) {
   const task = await AITask.findByPk(id);
   if (!task) throw ApiError.notFound('AI任务不存在');
   if (await isTaskLocked(task.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法删除');
+  // 释放当前会话的 codebuddy 缓存以回收内存，并删除该任务本地代码文件夹（含其中所有文件）
+  const sid = task.sessionId;
+  if (fs.existsSync(taskWorkspaceDir(sid))) {
+    await clearCodebuddySession(sid);
+    await removeWorkspaceDir(sid);
+  }
   await task.destroy();
 }
 
