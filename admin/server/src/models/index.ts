@@ -11,7 +11,7 @@ import { DataTaskInterface } from './dataTaskInterface.js';
 import { Requirement } from './requirement.js';
 import { RequirementFile } from './requirementFile.js';
 import { SmartDoc } from './smartDoc.js';
-import { AITask, AI_TASK_STATUS, type AITaskStatus } from './aiTask.js';
+import { AITask, AI_TASK_STATUS, AI_CODING_STATUS, type AITaskStatus, type AicodingStatus } from './aiTask.js';
 import { AiSubTask } from './aiSubTask.js';
 import { Demand, DEMAND_STATUS, type DemandStatus } from './demand.js';
 import { DemandFile } from './demandFile.js';
@@ -114,6 +114,8 @@ export {
   AITask,
   AI_TASK_STATUS,
   type AITaskStatus,
+  AI_CODING_STATUS,
+  type AicodingStatus,
   AiSubTask,
   Demand,
   DemandFile,

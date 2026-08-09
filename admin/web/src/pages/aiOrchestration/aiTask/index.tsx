@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, Card, Drawer, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd';
+import { Alert, Button, Card, Drawer, Form, Input, Modal, Popconfirm, Select, Space, Steps, Table, Tag, Tooltip, message } from 'antd';
 import { PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { aiTaskApi, aiSubTaskApi, smartDocApi } from '@/api';
 import type {
@@ -7,8 +7,9 @@ import type {
   AITaskStatus,
   AiSubTaskItem,
   SmartDocItem,
+  AicodingStatus,
 } from '@/api/types';
-import { AI_TASK_STATUS } from '@/api/types';
+import { AI_TASK_STATUS, AI_CODING_STATUS_COLOR } from '@/api/types';
 import { Auth } from '@/components/Auth';
 
 /** AI 任务状态对应 Tag 颜色 */
@@ -17,6 +18,15 @@ const AI_TASK_STATUS_COLOR: Record<AITaskStatus, string> = {
   进行中: 'processing',
   已结束: 'success',
 };
+
+/** Coding 状态 Tag：编译失败时 hover 展示失败原因 */
+function CodingStatusTag({ status, error }: { status: AicodingStatus; error?: string | null }) {
+  const tag = <Tag color={AI_CODING_STATUS_COLOR[status] ?? 'default'}>{status}</Tag>;
+  if (status === '编译失败' && error) {
+    return <Tooltip title={error}>{tag}</Tooltip>;
+  }
+  return tag;
+}
 
 interface FormValues {
   title: string;
@@ -89,6 +99,14 @@ function SubTaskModal({
     if (open) void load();
   }, [open, load]);
 
+  // AICoding 异步进行中：自动轮询子任务列表以反映 编译中 → 暂无/编译成功/编译失败
+  const anySubCoding = list.some((s) => s.codingStatus === '编译中') || parent.codingStatus === '编译中';
+  useEffect(() => {
+    if (!anySubCoding) return;
+    const t = setInterval(() => void load(), 5000);
+    return () => clearInterval(t);
+  }, [anySubCoding, load]);
+
   const openModal = (record?: AiSubTaskItem, view = false) => {
     setViewOnly(view);
     if (record) {
@@ -159,6 +177,15 @@ function SubTaskModal({
     message.success('删除成功');
     void load();
   };
+
+  const startSubAicoding = async (id: number) => {
+    await aiSubTaskApi.aicoding(id);
+    message.success('AICoding 已启动，正在根据智能文档修改代码');
+    void load();
+  };
+
+  // 整个任务锁：父任务或任一子任务正在 AICoding；子任务按钮据此禁用
+  const taskLocked = parent.codingStatus === '编译中' || list.some((s) => s.codingStatus === '编译中');
 
   return (
     <>
@@ -233,6 +260,12 @@ function SubTaskModal({
             width: 120,
             render: (v: AITaskStatus) => <Tag color={AI_TASK_STATUS_COLOR[v] ?? 'default'}>{v}</Tag>,
           },
+          {
+            title: 'Coding 状态',
+            dataIndex: 'codingStatus',
+            width: 120,
+            render: (v: AicodingStatus, record: AiSubTaskItem) => <CodingStatusTag status={v} error={record.codingError} />,
+          },
           { title: '创建人', dataIndex: 'creatorName', width: 100, render: (v: string | null) => v || '-' },
           { title: '创建时间', dataIndex: 'createdAt', width: 170 },
           {
@@ -258,6 +291,20 @@ function SubTaskModal({
                   <Popconfirm title="确认删除该子任务？" onConfirm={() => remove(record.id)}>
                     <Button type="link" size="small" danger disabled={locked}>
                       删除
+                    </Button>
+                  </Popconfirm>
+                </Auth>
+                <Auth perms="orchestration:aiTask:edit">
+                  <Popconfirm
+                    title="启动 AICoding？将根据关联智能文档在代码库中进行修改"
+                    onConfirm={() => startSubAicoding(record.id)}
+                  >
+                    <Button
+                      type="link"
+                      size="small"
+                      disabled={record.codingStatus === '编译中' || taskLocked || parent.status === '已结束'}
+                    >
+                      AICoding
                     </Button>
                   </Popconfirm>
                 </Auth>
@@ -350,6 +397,9 @@ export default function AiTaskPage() {
   const [statusTarget, setStatusTarget] = useState<AITaskItem | null>(null);
   const [statusValue, setStatusValue] = useState<AITaskStatus>('待开始');
   const [form] = Form.useForm<FormValues>();
+  /** 创建任务时（拉取代码库 + 切换分支 + 写库）的加载与进度状态 */
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const load = useCallback(
     async (next?: { page?: number; pageSize?: number }) => {
@@ -380,8 +430,18 @@ export default function AiTaskPage() {
     void smartDocApi.list().then(setDocOptions).catch(() => setDocOptions([]));
   }, [load]);
 
+  // AICoding 异步进行中：自动轮询以反映 编译中 → 暂无/编译成功/编译失败
+  const anyParentCoding = data.some((d) => d.codingStatus === '编译中' || d.codingActive);
+  useEffect(() => {
+    if (!anyParentCoding) return;
+    const t = setInterval(() => void load(), 5000);
+    return () => clearInterval(t);
+  }, [anyParentCoding, load]);
+
   const openModal = (record?: AITaskItem, view = false) => {
     setViewOnly(view);
+    setCreating(false);
+    setCreateError(null);
     if (record) {
       setEditing(record);
       form.setFieldsValue({
@@ -413,12 +473,36 @@ export default function AiTaskPage() {
     };
     if (editing) {
       await aiTaskApi.update(editing.id, payload);
+      message.success('修改成功');
+      setOpen(false);
+      void load();
     } else {
-      await aiTaskApi.create(payload);
+      // 创建任务：拉取代码库 + 切换分支 + 写库，期间锁定表单并实时展示进度
+      setCreating(true);
+      setCreateError(null);
+      try {
+        await aiTaskApi.create(payload);
+        message.success('创建成功，代码库已拉取并切换至指定分支');
+        setOpen(false);
+        void load();
+      } catch (e) {
+        setCreateError((e as Error).message);
+      } finally {
+        setCreating(false);
+      }
     }
-    message.success(editing ? '修改成功' : '新增成功');
-    setOpen(false);
-    void load();
+  };
+
+  /** 创建进度步骤（拉取代码库 → 切换/创建分支 → 写库）。实时反映当前阶段与失败原因。 */
+  const createSteps = (): ('wait' | 'process' | 'finish' | 'error')[] => {
+    if (creating) return ['process', 'wait', 'wait'];
+    if (createError) {
+      if (createError.includes('代码库拉取失败')) return ['error', 'wait', 'wait'];
+      if (createError.includes('代码分支切换失败') || createError.includes('远程分支创建失败'))
+        return ['finish', 'error', 'wait'];
+      return ['finish', 'finish', 'error'];
+    }
+    return ['finish', 'finish', 'finish'];
   };
 
   const openStatusModal = (record: AITaskItem) => {
@@ -438,6 +522,12 @@ export default function AiTaskPage() {
   const remove = async (id: number) => {
     await aiTaskApi.remove(id);
     message.success('删除成功');
+    void load();
+  };
+
+  const startAicoding = async (id: number) => {
+    await aiTaskApi.aicoding(id);
+    message.success('AICoding 已启动，正在根据智能文档修改代码');
     void load();
   };
 
@@ -516,6 +606,7 @@ export default function AiTaskPage() {
           rowKey="id"
           loading={loading}
           dataSource={data}
+          scroll={{ x: 1640 }}
           pagination={{
             current: page,
             pageSize,
@@ -525,12 +616,20 @@ export default function AiTaskPage() {
             onChange: (p, ps) => load({ page: p, pageSize: ps }),
           }}
           columns={[
-            { title: '任务标题', dataIndex: 'title', width: 200 },
+            { title: '任务标题', dataIndex: 'title', width: 200, fixed: 'left' },
             {
               title: 'Session ID',
               dataIndex: 'sessionId',
               width: 180,
+              fixed: 'left',
               render: (v: string) => <Tag color="purple">{v}</Tag>,
+            },
+            {
+              title: 'Coding 状态',
+              dataIndex: 'codingStatus',
+              width: 120,
+              fixed: 'left',
+              render: (v: AicodingStatus, record: AITaskItem) => <CodingStatusTag status={v} error={record.codingError} />,
             },
             {
               title: '关联智能文档',
@@ -549,7 +648,8 @@ export default function AiTaskPage() {
             { title: '创建时间', dataIndex: 'createdAt', width: 180 },
             {
               title: '操作',
-              width: 290,
+              width: 340,
+              fixed: 'right',
               render: (_, record) => (
                 <Space size={4}>
                   <Auth perms="orchestration:aiTask:list">
@@ -571,6 +671,20 @@ export default function AiTaskPage() {
                     <Popconfirm title="确认删除该 AI 任务？" onConfirm={() => remove(record.id)}>
                       <Button type="link" size="small" danger>
                         删除
+                      </Button>
+                    </Popconfirm>
+                  </Auth>
+                  <Auth perms="orchestration:aiTask:edit">
+                    <Popconfirm
+                      title="启动 AICoding？将根据关联智能文档在代码库中进行修改"
+                      onConfirm={() => startAicoding(record.id)}
+                    >
+                      <Button
+                        type="link"
+                        size="small"
+                        disabled={record.codingStatus === '编译中' || record.codingActive || record.status === '已结束'}
+                      >
+                        AICoding
                       </Button>
                     </Popconfirm>
                   </Auth>
@@ -597,12 +711,56 @@ export default function AiTaskPage() {
         onCancel={() => setOpen(false)}
         onOk={submit}
         okText={viewOnly ? '关闭' : '保存'}
+        okButtonProps={{ loading: creating }}
+        cancelButtonProps={{ disabled: creating }}
+        closable={!creating}
         destroyOnHidden
         maskClosable={false}
       >
+        {creating || createError ? (
+          <Alert
+            type={createError ? 'error' : 'info'}
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={createError ? '创建失败' : '正在创建 AI 任务'}
+            description={
+              <Steps
+                direction="vertical"
+                size="small"
+                items={[
+                  {
+                    title: '拉取代码库',
+                    status: createSteps()[0],
+                    description:
+                      createError && createError.includes('代码库拉取失败')
+                        ? createError
+                        : creating
+                          ? '正在克隆关联智能文档指向的代码库…'
+                          : '已完成',
+                  },
+                  {
+                    title: '切换代码分支',
+                    status: createSteps()[1],
+                    description:
+                      createError && (createError.includes('代码分支切换失败') || createError.includes('远程分支创建失败'))
+                        ? createError
+                        : creating
+                          ? '等待代码库拉取完成，分支不存在则创建远程分支…'
+                          : '已完成',
+                  },
+                  {
+                    title: '写入任务记录',
+                    status: createSteps()[2],
+                    description: createError && !createError.includes('代码库拉取失败') && !createError.includes('代码分支切换失败') ? createError : creating ? '等待前序步骤完成…' : '已完成',
+                  },
+                ]}
+              />
+            }
+          />
+        ) : null}
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item name="title" label="任务标题" rules={[{ required: true, message: '请输入任务标题' }]}>
-            <Input placeholder="如：登录页扫码登录需求文档生成" disabled={viewOnly} />
+            <Input placeholder="如：登录页扫码登录需求文档生成" disabled={viewOnly || creating} />
           </Form.Item>
           {editing && (
             <Form.Item label="Session ID">
@@ -610,23 +768,31 @@ export default function AiTaskPage() {
             </Form.Item>
           )}
           <Form.Item name="summary" label="任务摘要" rules={[{ required: true, message: '请输入任务摘要' }]}>
-            <Input placeholder="一句话概括任务目标" maxLength={255} disabled={viewOnly} />
+            <Input placeholder="一句话概括任务目标" maxLength={255} disabled={viewOnly || creating} />
           </Form.Item>
-          <Form.Item name="smartDocId" label="关联智能文档">
+          <Form.Item
+            name="smartDocId"
+            label="关联智能文档"
+            extra={editing ? '编辑任务时不可修改关联智能文档' : undefined}
+          >
             <Select
               allowClear
               placeholder="可关联一条智能文档"
               showSearch
-              disabled={viewOnly}
+              disabled={viewOnly || creating || !!editing}
               optionFilterProp="label"
               options={docOptions.map((d) => ({ label: d.title, value: d.id }))}
             />
           </Form.Item>
-          <Form.Item name="branch" label="代码分支">
-            <Input placeholder="如：feature/login-scan" maxLength={100} disabled={viewOnly} />
+          <Form.Item
+            name="branch"
+            label="代码分支"
+            extra={editing ? '编辑任务时不可修改代码分支' : undefined}
+          >
+            <Input placeholder="如：feature/login-scan" maxLength={100} disabled={viewOnly || creating || !!editing} />
           </Form.Item>
           <Form.Item name="status" label="任务状态" rules={[{ required: true, message: '请选择任务状态' }]}>
-            <Select options={AI_TASK_STATUS.map((s) => ({ label: s, value: s }))} disabled={viewOnly} />
+            <Select options={AI_TASK_STATUS.map((s) => ({ label: s, value: s }))} disabled={viewOnly || creating} />
           </Form.Item>
         </Form>
       </Modal>

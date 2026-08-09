@@ -92,6 +92,17 @@ router.patch(
   },
 );
 
+router.post(
+  '/:id/aicoding',
+  requirePerms('orchestration:aiTask:edit'),
+  operLog('AI子任务', 'UPDATE'),
+  validate(idSchema, 'params'),
+  async (req, res) => {
+    const { id } = req.params as unknown as z.infer<typeof idSchema>;
+    ok(res, await service.aicodingAiSubTask(id), 'AICoding 已启动');
+  },
+);
+
 router.delete(
   '/:id',
   requirePerms('orchestration:aiTask:remove'),

@@ -105,4 +105,15 @@ router.patch(
   },
 );
 
+router.post(
+  '/:id/aicoding',
+  requirePerms('orchestration:aiTask:edit'),
+  operLog('AI任务', 'UPDATE'),
+  validate(idSchema, 'params'),
+  async (req, res) => {
+    const { id } = req.params as unknown as z.infer<typeof idSchema>;
+    ok(res, await service.aicodingAITask(id), 'AICoding 已启动');
+  },
+);
+
 export default router;

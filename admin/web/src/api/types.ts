@@ -169,6 +169,18 @@ export const AI_TASK_STATUS_COLOR: Record<AITaskStatus, string> = {
   已结束: 'success',
 };
 
+export type AicodingStatus = '暂无' | '编译中' | '编译成功' | '编译失败';
+
+export const AI_CODING_STATUS: AicodingStatus[] = ['暂无', '编译中', '编译成功', '编译失败'];
+
+/** AICoding 状态对应 Tag 颜色 */
+export const AI_CODING_STATUS_COLOR: Record<AicodingStatus, string> = {
+  暂无: 'default',
+  编译中: 'processing',
+  编译成功: 'success',
+  编译失败: 'error',
+};
+
 export interface AITaskItem {
   id: number;
   title: string;
@@ -183,6 +195,12 @@ export interface AITaskItem {
   branch?: string | null;
   /** 任务状态：待开始 / 进行中 / 已结束 */
   status: AITaskStatus;
+  /** AICoding 状态：暂无 / 编译中 / 编译成功 / 编译失败 */
+  codingStatus: AicodingStatus;
+  /** AICoding 编译失败原因（codingStatus 为『编译失败』时展示） */
+  codingError?: string | null;
+  /** 该任务（含任一子任务）是否正在 AICoding —— 用于禁用按钮 */
+  codingActive?: boolean;
   creatorId: number | null;
   creatorName: string | null;
   createdAt: string;
@@ -213,6 +231,12 @@ export interface AiSubTaskItem {
   branch?: string | null;
   /** 任务状态：待开始 / 进行中 / 已结束 */
   status: AITaskStatus;
+  /** AICoding 状态：暂无 / 编译中 / 编译成功 / 编译失败 */
+  codingStatus: AicodingStatus;
+  /** AICoding 编译失败原因（codingStatus 为『编译失败』时展示） */
+  codingError?: string | null;
+  /** 该任务（含任一子任务）是否正在 AICoding —— 用于禁用按钮 */
+  codingActive?: boolean;
   creatorId: number | null;
   creatorName: string | null;
   createdAt: string;

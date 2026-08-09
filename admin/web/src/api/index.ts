@@ -3,6 +3,7 @@ import type {
   AITaskItem,
   AITaskInput,
   AITaskStatus,
+  AicodingStatus,
   AiSubTaskItem,
   AiSubTaskInput,
   CodeRepoItem,
@@ -127,6 +128,7 @@ export const aiTaskApi = {
   update: (id: number, body: AITaskInput) => http.put<AITaskItem>(`/ai-tasks/${id}`, body),
   updateStatus: (id: number, status: AITaskStatus) =>
     http.patch<AITaskItem>(`/ai-tasks/${id}/status`, { status }),
+  aicoding: (id: number) => http.post<{ codingStatus: AicodingStatus }>(`/ai-tasks/${id}/aicoding`),
   remove: (id: number) => http.delete<null>(`/ai-tasks/${id}`),
 };
 
@@ -137,6 +139,7 @@ export const aiSubTaskApi = {
   update: (id: number, body: AiSubTaskInput) => http.put<AiSubTaskItem>(`/ai-sub-tasks/${id}`, body),
   updateStatus: (id: number, status: AITaskStatus) =>
     http.patch<AiSubTaskItem>(`/ai-sub-tasks/${id}/status`, { status }),
+  aicoding: (id: number) => http.post<{ codingStatus: AicodingStatus }>(`/ai-sub-tasks/${id}/aicoding`),
   remove: (id: number) => http.delete<null>(`/ai-sub-tasks/${id}`),
 };
 

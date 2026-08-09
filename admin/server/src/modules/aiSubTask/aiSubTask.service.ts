@@ -1,6 +1,16 @@
 import { Op } from 'sequelize';
-import { AiSubTask, SmartDoc, type AITaskStatus } from '../../models/index.js';
+import fs from 'fs';
+import {
+  AiSubTask,
+  AITask,
+  SmartDoc,
+  type AITaskStatus,
+  type AicodingStatus,
+} from '../../models/index.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { taskWorkspaceDir, hasUncommittedChanges } from '../../utils/git.js';
+import { runAICoding } from '../../utils/codebuddy.js';
+import { isTaskLocked, activeCodingParentCount } from '../aiTask/aiTask.service.js';
 
 export interface AiSubTaskInput {
   parentId: number;
@@ -47,6 +57,7 @@ export async function createAiSubTask(input: AiSubTaskInput) {
     smartDocId: input.smartDocId ?? null,
     branch: input.branch?.trim() || null,
     status: input.status ?? '待开始',
+    codingStatus: '暂无',
     creatorId: input.creatorId ?? null,
     creatorName: input.creatorName ?? null,
   });
@@ -55,6 +66,7 @@ export async function createAiSubTask(input: AiSubTaskInput) {
 export async function updateAiSubTask(id: number, input: AiSubTaskInput) {
   const task = await AiSubTask.findByPk(id);
   if (!task) throw ApiError.notFound('AI子任务不存在');
+  if (await isTaskLocked(task.parentId)) throw ApiError.badRequest('该任务正在 AICoding 中，无法修改');
 
   const patch: Record<string, unknown> = {
     parentId: input.parentId,
@@ -71,14 +83,63 @@ export async function updateAiSubTask(id: number, input: AiSubTaskInput) {
 
 /** 列表页直接修改状态 */
 export async function updateAiSubTaskStatus(id: number, status: AITaskStatus) {
-  const task = await AiSubTask.findByPk(id);
+  const task = await AiSubTask.findByPk(id, { include: [{ model: AITask, as: 'parent' }] });
   if (!task) throw ApiError.notFound('AI子任务不存在');
-  await task.update({ status });
+  const parent = (task as unknown as { parent?: AITask }).parent!;
+  // 结束子任务前同样校验：父任务正在 AICoding，或共享代码库有未提交改动（会阻断后续父任务结束）
+  if (status === '已结束') {
+    if (await isTaskLocked(parent.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法结束');
+    const sid = parent.sessionId;
+    if (sid && fs.existsSync(taskWorkspaceDir(sid)) && (await hasUncommittedChanges(sid))) {
+      throw ApiError.badRequest('该任务代码库存在未提交的修改，无法结束任务（请先提交或处理改动）');
+    }
+    await task.update({ status });
+  } else {
+    await task.update({ status });
+  }
   return task;
 }
 
 export async function removeAiSubTask(id: number) {
   const task = await AiSubTask.findByPk(id);
   if (!task) throw ApiError.notFound('AI子任务不存在');
+  if (await isTaskLocked(task.parentId)) throw ApiError.badRequest('该任务正在 AICoding 中，无法删除');
   await task.destroy();
+}
+
+/** 启动子任务 AICoding：复用父任务 sessionId 会话（共享对话上下文），基于子任务自身关联智能文档改代码 */
+export async function aicodingAiSubTask(id: number) {
+  const sub = await AiSubTask.findByPk(id, { include: [{ model: AITask, as: 'parent' }] });
+  if (!sub) throw ApiError.notFound('AI子任务不存在');
+  const parent = (sub as unknown as { parent?: AITask }).parent!;
+  if (!parent) throw ApiError.notFound('所属 AI 任务不存在');
+  if (parent.status === '已结束') throw ApiError.badRequest('已结束的任务不能启动 AICoding');
+  if (!sub.smartDocId) throw ApiError.badRequest('请先在子任务中关联智能文档后再启动 AICoding');
+  const sd = await SmartDoc.findByPk(sub.smartDocId);
+  if (!sd?.content) throw ApiError.badRequest('关联智能文档暂无需求描述内容，无法启动 AICoding');
+  const sessionId = parent.sessionId;
+  if (!sessionId || !fs.existsSync(taskWorkspaceDir(sessionId))) {
+    throw ApiError.badRequest('代码库尚未拉取，无法启动 AICoding（请确认父任务创建时成功拉取了代码库）');
+  }
+  if (await isTaskLocked(parent.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法重复启动');
+  if (await activeCodingParentCount(parent.id) >= 2) {
+    throw ApiError.badRequest('最多允许两个任务同时进行 AICoding，请稍后再试');
+  }
+
+  await sub.update({ codingStatus: '编译中' });
+  const prompt = `根据以下智能需求描述文档，在当前代码库中进行相应的代码修改：\n\n${sd.content}`;
+  runAICoding(sessionId, prompt, taskWorkspaceDir(sessionId), (code) => {
+    AiSubTask.findByPk(id)
+      .then((s) => {
+        if (!s) return;
+        if (code === 0) {
+          return s.update({ codingStatus: '编译成功', codingError: null });
+        }
+        const reason = code === null ? 'codebuddy 启动失败' : `codebuddy 进程退出码 ${code}`;
+        return s.update({ codingStatus: '编译失败', codingError: reason });
+      })
+      .catch(() => undefined);
+    if (code !== 0) console.error(`[aicoding] 子任务 ${id} codebuddy 退出码 ${code}`);
+  });
+  return { codingStatus: '编译中' as AicodingStatus };
 }
