@@ -8,7 +8,7 @@ import mysql from 'mysql2/promise';
 import { Op, DataTypes } from 'sequelize';
 import { config } from '../config/index.js';
 import { sequelize } from '../db/index.js';
-import { Dept, User, Role, Menu, CodeRepo, Requirement, UserRole, RoleMenu, RoleDept, RoleCodeRepo } from '../models/index.js';
+import { Dept, User, Role, Menu, CodeRepo, Requirement, DataTask, DataTaskProject, UserRole, RoleMenu, RoleDept, RoleCodeRepo } from '../models/index.js';
 import { hashPassword } from '../utils/password.js';
 import { DataScope, MenuType, type MenuTypeValue } from '../types/index.js';
 
@@ -419,6 +419,21 @@ async function ensureUserGitKeyColumn() {
   }
 }
 
+/**
+ * 兼容存量库：数据任务原仅支持单项目（DataTask.projectId），
+ * 现多项目关系落在 sys_data_task_project，这里把已有任务的单项目补齐进关联表（幂等）。
+ */
+async function ensureDataTaskProjects() {
+  const tasks = await DataTask.findAll({ attributes: ['id', 'projectId'], raw: true });
+  for (const task of tasks) {
+    if (!task.projectId) continue;
+    const exists = await DataTaskProject.findOne({ where: { taskId: task.id, projectId: task.projectId } });
+    if (!exists) {
+      await DataTaskProject.create({ taskId: task.id, projectId: task.projectId });
+    }
+  }
+}
+
 /* ── 主流程 ───────────────────────────────────────── */
 async function main() {
   await ensureDatabase();
@@ -426,9 +441,10 @@ async function main() {
   await sequelize.sync({ force });
   console.log(force ? '[db:init] 已删除并重建全部数据表' : '[db:init] 数据表已同步');
 
-  // 增量补齐：存量库不会走下面的种子分支，这里保证新菜单与字段列一定存在
+  // 增量补齐：存量库不会走下面的种子分支，这里保证新菜单、字段列与多项目关联一定存在
   await ensureUserGitKeyColumn();
   await ensureUserInfoMenu();
+  await ensureDataTaskProjects();
 
   const existing = await User.count();
   if (existing > 0 && !force) {

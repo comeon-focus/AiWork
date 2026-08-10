@@ -35,7 +35,7 @@ const STATUS_COLOR: Record<number, string> = {
 interface FormValues {
   name: string;
   userIds?: number[];
-  projectId: string;
+  projectIds: string[];
   interfaceCount: number;
 }
 
@@ -102,7 +102,7 @@ export default function DataTaskPage() {
       form.setFieldsValue({
         name: record.name,
         userIds: record.users.map((u) => u.id),
-        projectId: record.projectId,
+        projectIds: record.projectIds,
         interfaceCount: record.interfaceCount,
       });
     } else {
@@ -116,7 +116,7 @@ export default function DataTaskPage() {
     const values = await form.validateFields();
     const payload = {
       name: values.name,
-      projectId: values.projectId,
+      projectIds: values.projectIds,
       interfaceCount: values.interfaceCount,
       userIds: values.userIds ?? [],
     };
@@ -155,6 +155,10 @@ export default function DataTaskPage() {
   };
 
   const sync = async (record: DataTaskItem) => {
+    if (!record.projectIds?.length) {
+      message.warning('该任务尚未关联任何项目，请先在编辑中关联项目后再同步');
+      return;
+    }
     const res = await dataTaskApi.sync(record.id);
     message.success(`同步完成：新增 ${res.imported} 条，更新 ${res.updated} 条`);
     void load();
@@ -181,7 +185,21 @@ export default function DataTaskPage() {
           '-'
         ),
     },
-    { title: '关联项目', dataIndex: 'projectName', width: 160, render: (v: string | null) => v || '-' },
+    {
+      title: '关联项目',
+      dataIndex: 'projectNames',
+      width: 200,
+      render: (names: string[]) =>
+        names?.length ? (
+          <Space size={4} wrap>
+            {names.map((n, i) => (
+              <Tag key={i}>{n}</Tag>
+            ))}
+          </Space>
+        ) : (
+          '-'
+        ),
+    },
     { title: '接口数量', dataIndex: 'interfaceCount', width: 120 },
     {
       title: '完成进度',
@@ -336,12 +354,18 @@ export default function DataTaskPage() {
               optionFilterProp="label"
             />
           </Form.Item>
-          <Form.Item name="projectId" label="关联项目" rules={[{ required: true, message: '请选择关联项目' }]}>
+          <Form.Item
+            name="projectIds"
+            label="关联项目"
+            rules={[{ required: true, message: '请至少关联一个项目' }]}
+          >
             <Select
+              mode="multiple"
               showSearch
-              placeholder="选择数据模拟项目"
+              placeholder="选择数据模拟项目（可多选）"
               options={projectOptions.map((p) => ({ label: p.name, value: p.projectId }))}
               optionFilterProp="label"
+              maxTagCount="responsive"
             />
           </Form.Item>
           <Form.Item

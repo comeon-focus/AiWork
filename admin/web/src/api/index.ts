@@ -231,11 +231,11 @@ export const dataSimInterfaceApi = {
 export const dataTaskApi = {
   list: (params?: { keyword?: string; status?: number; page?: number; pageSize?: number }) =>
     http.get<PageResult<DataTaskItem>>('/data-tasks', params),
-  create: (body: { name: string; projectId: string; interfaceCount: number; userIds?: number[] }) =>
+  create: (body: { name: string; projectIds: string[]; interfaceCount: number; userIds?: number[] }) =>
     http.post<DataTaskItem>('/data-tasks', body),
   update: (
     id: number,
-    body: { name?: string; projectId?: string; interfaceCount?: number; userIds?: number[] },
+    body: { name?: string; projectIds?: string[]; interfaceCount?: number; userIds?: number[] },
   ) => http.put<DataTaskItem>(`/data-tasks/${id}`, body),
   remove: (id: number) => http.delete<null>(`/data-tasks/${id}`),
   changeStatus: (id: number, status: number) => http.put<DataTaskItem>(`/data-tasks/${id}/status`, { status }),

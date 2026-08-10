@@ -447,8 +447,10 @@ export interface TaskUserItem {
 export interface DataTaskItem {
   id: number;
   name: string;
-  projectId: string;
-  projectName: string | null;
+  /** 关联项目的 projectId 列表（多对多） */
+  projectIds: string[];
+  /** 关联项目的名称列表，与 projectIds 一一对应 */
+  projectNames: string[];
   /** 接口任务数量（目标） */
   interfaceCount: number;
   /** 0=进行中 1=成功 2=失败 */

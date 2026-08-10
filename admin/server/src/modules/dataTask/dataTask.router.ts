@@ -21,14 +21,21 @@ const idIidSchema = z.object({ id: z.coerce.number().int().positive(), iid: z.co
 
 const taskSchema = z.object({
   name: z.string().trim().min(1, '任务名称必填').max(100),
-  projectId: z.string().trim().min(1, '请选择关联项目'),
+  projectIds: z
+    .array(z.string().trim().min(1, '关联项目不能为空'))
+    .min(1, '请至少关联一个项目')
+    .max(50, '关联项目数量过多'),
   interfaceCount: z.coerce.number().int().positive('接口任务数量需为正整数'),
   userIds: z.array(z.coerce.number().int().positive()).optional(),
 });
 
 const taskUpdateSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
-  projectId: z.string().trim().min(1).optional(),
+  projectIds: z
+    .array(z.string().trim().min(1, '关联项目不能为空'))
+    .min(1, '请至少关联一个项目')
+    .max(50, '关联项目数量过多')
+    .optional(),
   interfaceCount: z.coerce.number().int().positive().optional(),
   userIds: z.array(z.coerce.number().int().positive()).optional(),
 });

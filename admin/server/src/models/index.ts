@@ -7,6 +7,7 @@ import { DataSimProject } from './dataSimProject.js';
 import { DataSimInterface } from './dataSimInterface.js';
 import { DataTask, TASK_STATUS } from './dataTask.js';
 import { DataTaskUser } from './dataTaskUser.js';
+import { DataTaskProject } from './dataTaskProject.js';
 import { DataTaskInterface } from './dataTaskInterface.js';
 import { Requirement } from './requirement.js';
 import { RequirementFile } from './requirementFile.js';
@@ -101,6 +102,10 @@ DataTask.belongsToMany(User, { through: DataTaskUser, foreignKey: 'taskId', othe
 User.belongsToMany(DataTask, { through: DataTaskUser, foreignKey: 'userId', otherKey: 'taskId', as: 'dataTasks' });
 DataTaskUser.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 
+/* ── 数据任务 ↔ 数据模拟项目 多对多（一个任务可关联多个项目） ── */
+DataTask.hasMany(DataTaskProject, { foreignKey: 'taskId', as: 'taskProjects' });
+DataTaskProject.belongsTo(DataTask, { foreignKey: 'taskId', as: 'task' });
+
 /* ── 数据任务 ↔ 数据模拟项目 ─────────────────────── */
 DataTask.belongsTo(DataSimProject, { foreignKey: 'projectId', targetKey: 'projectId', as: 'project' });
 
@@ -114,6 +119,7 @@ export {
   DataSimInterface,
   DataTask,
   DataTaskUser,
+  DataTaskProject,
   DataTaskInterface,
   TASK_STATUS,
   Requirement,

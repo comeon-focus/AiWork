@@ -1,13 +1,13 @@
 import { Op } from 'sequelize';
 import { sequelize } from '../../db/index.js';
-import { DataTask, TASK_STATUS, DataTaskUser, DataTaskInterface, DataSimProject, DataSimInterface, User } from '../../models/index.js';
+import { DataTask, TASK_STATUS, DataTaskUser, DataTaskProject, DataTaskInterface, DataSimProject, DataSimInterface, User } from '../../models/index.js';
 import { ApiError } from '../../utils/ApiError.js';
 
 export const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'] as const;
 
 export interface DataTaskInput {
   name: string;
-  projectId: string;
+  projectIds: string[];
   interfaceCount: number;
   userIds?: number[];
 }
@@ -17,11 +17,16 @@ export interface TaskUserItem {
   nickname: string;
 }
 
+export interface DataTaskProjectItem {
+  projectId: string;
+  name: string;
+}
+
 export interface DataTaskListItem {
   id: number;
   name: string;
-  projectId: string;
-  projectName: string | null;
+  projectIds: string[];
+  projectNames: string[];
   interfaceCount: number;
   status: number;
   progress: number;
@@ -90,6 +95,19 @@ async function usersOfTask(taskId: number): Promise<TaskUserItem[]> {
     .map((u) => ({ id: u.id, nickname: u.nickname }));
 }
 
+/** 批量取任务关联的项目 id 列表，返回 Map<taskId, projectId[]> */
+async function projectIdsMap(taskIds: number[]): Promise<Map<number, string[]>> {
+  const map = new Map<number, string[]>();
+  if (taskIds.length === 0) return map;
+  const links = await DataTaskProject.findAll({ where: { taskId: { [Op.in]: taskIds } } });
+  for (const link of links) {
+    const arr = map.get(link.taskId) ?? [];
+    arr.push(link.projectId);
+    map.set(link.taskId, arr);
+  }
+  return map;
+}
+
 export async function listDataTasks(filter: ListTaskFilter): Promise<PageResult<DataTaskListItem>> {
   const page = filter.page ?? 1;
   const pageSize = filter.pageSize ?? 10;
@@ -105,17 +123,24 @@ export async function listDataTasks(filter: ListTaskFilter): Promise<PageResult<
     order: [['id', 'DESC']],
     limit: pageSize,
     offset: (page - 1) * pageSize,
-    include: [{ model: DataSimProject, as: 'project', attributes: ['name'], required: false }],
   });
   const counts = await createdCountMap(rows.map((r) => r.id));
+  const links = await projectIdsMap(rows.map((r) => r.id));
+  const allProjIds = [...new Set([...links.values()].flat())];
+  const projects = allProjIds.length
+    ? await DataSimProject.findAll({ where: { projectId: { [Op.in]: allProjIds } } })
+    : [];
+  const projNameMap = new Map(projects.map((p) => [p.projectId, p.name]));
+
   const list = await Promise.all(
     rows.map(async (t) => {
       const createdCount = counts.get(t.id) ?? 0;
+      const projectIds = links.get(t.id) ?? [];
       return {
         id: t.id,
         name: t.name,
-        projectId: t.projectId,
-        projectName: (t as unknown as { project?: { name: string } | null }).project?.name ?? null,
+        projectIds,
+        projectNames: projectIds.map((pid) => projNameMap.get(pid) ?? pid),
         interfaceCount: t.interfaceCount,
         status: t.status,
         progress: calcProgress(createdCount, t.interfaceCount),
@@ -137,19 +162,47 @@ export async function getDataTask(id: number): Promise<DataTask> {
   return t;
 }
 
+/** 校验关联项目均存在且至少有一个；返回去重后的项目 id 列表 */
+async function assertProjectsExist(projectIds: string[]): Promise<string[]> {
+  const unique = [...new Set(projectIds.map((p) => p.trim()).filter(Boolean))];
+  if (unique.length === 0) throw ApiError.badRequest('请至少关联一个项目');
+  const found = await DataSimProject.findAll({ where: { projectId: { [Op.in]: unique } } });
+  if (found.length !== unique.length) throw ApiError.badRequest('存在无效的关联项目');
+  return unique;
+}
+
+/** 全量替换任务的关联项目（先删后插，幂等） */
+async function setTaskProjects(taskId: number, projectIds: string[]): Promise<void> {
+  const unique = await assertProjectsExist(projectIds);
+  await DataTaskProject.destroy({ where: { taskId } });
+  if (unique.length) {
+    await DataTaskProject.bulkCreate(
+      unique.map((pid) => ({ taskId, projectId: pid })),
+      { ignoreDuplicates: true },
+    );
+  }
+}
+
+/** 取任务的关联项目 id 列表（去重） */
+async function projectIdsOf(taskId: number): Promise<string[]> {
+  const links = await DataTaskProject.findAll({ where: { taskId } });
+  return [...new Set(links.map((l) => l.projectId))];
+}
+
 export async function createDataTask(input: DataTaskInput, auth: { id: number; nickname: string }): Promise<DataTask> {
-  const project = await DataSimProject.findOne({ where: { projectId: input.projectId } });
-  if (!project) throw ApiError.badRequest('关联项目不存在');
+  const unique = await assertProjectsExist(input.projectIds);
 
   const task = await DataTask.create({
     name: input.name.trim(),
-    projectId: input.projectId,
+    // 保留首个项目作为冗余主项目，便于历史查询与兼容
+    projectId: unique[0]!,
     interfaceCount: input.interfaceCount,
     status: TASK_STATUS.IN_PROGRESS,
     createdBy: auth.nickname,
     updatedBy: auth.nickname,
   });
 
+  await setTaskProjects(task.id, unique);
   if (input.userIds?.length) {
     await DataTaskUser.bulkCreate(
       input.userIds.map((userId) => ({ taskId: task.id, userId })),
@@ -161,16 +214,16 @@ export async function createDataTask(input: DataTaskInput, auth: { id: number; n
 
 export async function updateDataTask(
   id: number,
-  input: { name?: string; projectId?: string; interfaceCount?: number; userIds?: number[] },
+  input: { name?: string; projectIds?: string[]; interfaceCount?: number; userIds?: number[] },
   auth: { id: number; nickname: string },
 ): Promise<DataTask> {
   const t = await getDataTask(id);
   if (t.status === TASK_STATUS.SUCCESS) throw ApiError.badRequest('任务已成功，不可修改');
 
-  if (input.projectId && input.projectId !== t.projectId) {
-    const project = await DataSimProject.findOne({ where: { projectId: input.projectId } });
-    if (!project) throw ApiError.badRequest('关联项目不存在');
-    t.projectId = input.projectId;
+  if (input.projectIds) {
+    const unique = await assertProjectsExist(input.projectIds);
+    await setTaskProjects(t.id, unique);
+    t.projectId = unique[0]!;
   }
   if (input.name !== undefined) t.name = input.name.trim();
   if (input.interfaceCount !== undefined) t.interfaceCount = input.interfaceCount;
@@ -193,6 +246,7 @@ export async function removeDataTask(id: number): Promise<void> {
   const t = await getDataTask(id);
   if (t.status === TASK_STATUS.SUCCESS) throw ApiError.badRequest('任务已成功，不可删除');
   await DataTaskUser.destroy({ where: { taskId: t.id } });
+  await DataTaskProject.destroy({ where: { taskId: t.id } });
   await DataTaskInterface.destroy({ where: { taskId: t.id } });
   await t.destroy();
 }
@@ -313,8 +367,9 @@ export async function removeTaskInterface(taskId: number, interfaceId: number): 
 }
 
 /**
- * 把任务下的接口同步到关联项目：按 projectId+path upsert 进 sys_data_sim_interface，
- * 并把这些任务接口标记为已同步。重复同步幂等。
+ * 把任务下的接口一键同步到其关联的所有项目：对每个关联项目按 path upsert 进
+ * sys_data_sim_interface（同一项目内 path 唯一，跨项目互不影响），并把这些任务接口标记为已同步。
+ * 重复同步幂等：已存在的 path 走更新，不存在的走新增。
  */
 export async function syncTaskInterfaces(
   taskId: number,
@@ -322,44 +377,54 @@ export async function syncTaskInterfaces(
 ): Promise<SyncResult> {
   const t = await getDataTask(taskId);
   if (t.status === TASK_STATUS.SUCCESS) throw ApiError.badRequest('任务已成功，不能同步');
+
+  const projectIds = await projectIdsOf(taskId);
+  if (projectIds.length === 0) {
+    throw ApiError.badRequest('该任务尚未关联任何项目，请先在编辑中关联项目后再同步');
+  }
+
   const interfaces = await DataTaskInterface.findAll({ where: { taskId } });
   if (interfaces.length === 0) return { imported: 0, updated: 0 };
-
-  const existingMap = new Map<string, number>();
-  for (const it of await DataSimInterface.findAll({
-    where: { projectId: t.projectId },
-    attributes: ['id', 'path'],
-  })) {
-    existingMap.set(it.path.trim(), it.id);
-  }
 
   let imported = 0;
   let updated = 0;
   const syncedIds: number[] = [];
-  for (const src of interfaces) {
-    const path = src.path.trim();
-    const payload = {
-      description: src.description,
-      method: src.method,
-      path,
-      responseData: src.responseData,
-    };
-    const existingId = existingMap.get(path);
-    if (existingId != null) {
-      await DataSimInterface.update({ ...payload, updatedBy: auth.nickname }, { where: { id: existingId } });
-      updated++;
-    } else {
-      const created = await DataSimInterface.create({
-        projectId: t.projectId,
-        createdBy: auth.nickname,
-        updatedBy: auth.nickname,
-        ...payload,
-      });
-      existingMap.set(path, created.id);
-      imported++;
+
+  for (const pid of projectIds) {
+    const existingMap = new Map<string, number>();
+    for (const it of await DataSimInterface.findAll({
+      where: { projectId: pid },
+      attributes: ['id', 'path'],
+    })) {
+      existingMap.set(it.path.trim(), it.id);
     }
-    syncedIds.push(src.id);
+
+    for (const src of interfaces) {
+      const path = src.path.trim();
+      const payload = {
+        description: src.description,
+        method: src.method,
+        path,
+        responseData: src.responseData,
+      };
+      const existingId = existingMap.get(path);
+      if (existingId != null) {
+        await DataSimInterface.update({ ...payload, updatedBy: auth.nickname }, { where: { id: existingId } });
+        updated++;
+      } else {
+        const created = await DataSimInterface.create({
+          projectId: pid,
+          createdBy: auth.nickname,
+          updatedBy: auth.nickname,
+          ...payload,
+        });
+        existingMap.set(path, created.id);
+        imported++;
+      }
+      syncedIds.push(src.id);
+    }
   }
+
   if (syncedIds.length) {
     await DataTaskInterface.update({ synced: true }, { where: { id: { [Op.in]: syncedIds } } });
   }

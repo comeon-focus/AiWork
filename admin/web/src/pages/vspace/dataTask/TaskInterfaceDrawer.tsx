@@ -196,7 +196,9 @@ export function TaskInterfaceDrawer({ task, open, onClose, onChanged }: Props) {
     <Drawer title={`接口管理 · ${task?.name ?? ''}`} width={960} open={open} onClose={onClose}>
       <Flex justify="space-between" align="center" gap={12} wrap style={{ marginBottom: 16 }}>
         <Space wrap>
-          <span style={{ color: '#999' }}>关联项目：{task?.projectName}</span>
+          <span style={{ color: '#999' }}>
+            关联项目：{task?.projectNames?.length ? task.projectNames.join('、') : '-'}
+          </span>
         </Space>
         <Space wrap>
           <Input.Search
