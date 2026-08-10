@@ -157,6 +157,14 @@ const MENU_SEED: MenuSeed[] = [
           { name: '删除代码库', type: MenuType.BUTTON, perms: 'system:repo:remove' },
         ],
       },
+      {
+        name: '用户信息',
+        type: MenuType.MENU,
+        path: '/system/user-info',
+        component: 'system/userInfo/index',
+        icon: 'IdcardOutlined',
+        perms: 'monitor:userinfo:view',
+      },
     ],
   },
   {
@@ -182,14 +190,6 @@ const MENU_SEED: MenuSeed[] = [
         icon: 'FileTextOutlined',
         perms: 'monitor:operlog:list',
         children: [{ name: '清空操作日志', type: MenuType.BUTTON, perms: 'monitor:operlog:remove' }],
-      },
-      {
-        name: '用户信息',
-        type: MenuType.MENU,
-        path: '/monitor/user-info',
-        component: 'monitor/userInfo/index',
-        icon: 'IdcardOutlined',
-        perms: 'monitor:userinfo:view',
       },
     ],
   },
@@ -339,35 +339,58 @@ function pickMenuIds(names: string[]): number[] {
 
 /* ── 增量补齐：兼容已在运行的数据库，无需 --force 重建 ── */
 
-/** 确保「用户信息」菜单存在并授权给所有非超级管理员角色（超管自动拥有全部菜单） */
+/**
+ * 确保「用户信息」菜单挂在「系统管理」下，并授权给所有非超级管理员角色（超管自动拥有全部菜单）。
+ * 兼容已在运行的数据库：若旧节点仍在「系统监控」下，则就地迁移（保留角色授权关联），并清理残留重复项。
+ */
 async function ensureUserInfoMenu() {
-  const parent = await Menu.findOne({ where: { name: '系统监控', type: MenuType.CATALOG } });
-  if (!parent) return; // 系统监控目录缺失则不处理
+  const sysParent = await Menu.findOne({ where: { name: '系统管理', type: MenuType.CATALOG } });
+  if (!sysParent) return; // 系统管理目录缺失则不处理
+  const monitorParent = await Menu.findOne({ where: { name: '系统监控', type: MenuType.CATALOG } });
 
-  const [menu] = await Menu.findOrCreate({
-    where: { name: '用户信息', parentId: parent.id },
-    defaults: {
-      parentId: parent.id,
-      name: '用户信息',
-      type: MenuType.MENU,
-      path: '/monitor/user-info',
-      component: 'monitor/userInfo/index',
+  // 优先复用已存在的「用户信息」节点（可能在系统监控旧路径下），整体迁移到系统管理
+  const old = await Menu.findOne({
+    where: monitorParent ? { name: '用户信息', parentId: monitorParent.id } : { name: '用户信息' },
+  });
+  const target =
+    old ?? (await Menu.findOne({ where: { name: '用户信息', parentId: sysParent.id } }));
+
+  if (target) {
+    await target.update({
+      parentId: sysParent.id,
+      path: '/system/user-info',
+      component: 'system/userInfo/index',
       perms: 'monitor:userinfo:view',
       icon: 'IdcardOutlined',
-      sort: 3,
+      sort: 6,
+    });
+  } else {
+    await Menu.create({
+      parentId: sysParent.id,
+      name: '用户信息',
+      type: MenuType.MENU,
+      path: '/system/user-info',
+      component: 'system/userInfo/index',
+      perms: 'monitor:userinfo:view',
+      icon: 'IdcardOutlined',
+      sort: 6,
       visible: 1,
       status: 1,
       keepAlive: 0,
       redirect: null,
-    },
-  });
+    });
+  }
 
+  // 清掉系统管理以外的残留同名节点（含旧系统监控路径下的重复项）
+  await Menu.destroy({ where: { name: '用户信息', parentId: { [Op.ne]: sysParent.id } } });
+
+  const menu = (await Menu.findOne({ where: { name: '用户信息', parentId: sysParent.id } }))!;
   const roles = await Role.findAll({ where: { roleKey: { [Op.ne]: 'admin' } } });
   for (const role of roles) {
     const exists = await RoleMenu.findOne({ where: { roleId: role.id, menuId: menu.id } });
     if (!exists) await RoleMenu.create({ roleId: role.id, menuId: menu.id });
   }
-  console.log('[db:init] 用户信息菜单已就绪');
+  console.log('[db:init] 用户信息菜单已迁移至「系统管理」');
 }
 
 /** 确保 sys_user 已包含 git_key 字段（模型已声明，此处补齐存量库） */
