@@ -435,7 +435,7 @@ export async function aicodingAITask(id: number, actor?: AicodingActor | null) {
     throw ApiError.badRequest('最多允许两个任务同时进行 AICoding，请稍后再试');
   }
 
-  await task.update({ codingStatus: '编译中', codingError: null });
+  await task.update({ codingStatus: '编译中', codingError: null, status: '进行中' });
   const repoDir = taskWorkspaceDir(sessionId);
   const prompt = buildAicodingPrompt(repoDir, sd.content);
   try {

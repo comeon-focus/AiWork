@@ -52,11 +52,13 @@ function SubTaskModal({
   docOptions,
   open,
   onClose,
+  onChanged,
 }: {
   parent: AITaskItem;
   docOptions: SmartDocItem[];
   open: boolean;
   onClose: () => void;
+  onChanged?: () => void;
 }) {
   const [list, setList] = useState<AiSubTaskItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -75,8 +77,8 @@ function SubTaskModal({
   const locked = parent.status === '已结束';
 
   const load = useCallback(
-    async (next?: { title?: string; page?: number; pageSize?: number }) => {
-      setLoading(true);
+    async (next?: { title?: string; page?: number; pageSize?: number }, opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setLoading(true);
       try {
         const p = next?.page ?? page;
         const ps = next?.pageSize ?? pageSize;
@@ -90,7 +92,7 @@ function SubTaskModal({
         setPage(p);
         setPageSize(ps);
       } finally {
-        setLoading(false);
+        if (!opts?.silent) setLoading(false);
       }
     },
     [parent.id, page, pageSize],
@@ -104,7 +106,8 @@ function SubTaskModal({
   const anySubCoding = list.some((s) => s.codingStatus === '编译中') || parent.codingStatus === '编译中';
   useEffect(() => {
     if (!anySubCoding) return;
-    const t = setInterval(() => void load(), 5000);
+    // 轮询用静默刷新，避免每 5s 弹出整表 loading
+    const t = setInterval(() => void load(undefined, { silent: true }), 5000);
     return () => clearInterval(t);
   }, [anySubCoding, load]);
 
@@ -183,6 +186,8 @@ function SubTaskModal({
     await aiSubTaskApi.aicoding(id);
     message.success('AICoding 已启动，正在根据智能文档修改代码');
     void load();
+    // 子任务启动后，父任务 codingActive 立即生效：通知父页面刷新列表，使父任务按钮即时置灰
+    onChanged?.();
   };
 
   // 整个任务锁：父任务或任一子任务正在 AICoding；子任务按钮据此禁用
@@ -275,7 +280,12 @@ function SubTaskModal({
             render: (_, record) => (
               <Space size={4}>
                 <Auth perms="orchestration:aiTask:edit">
-                  <Button type="link" size="small" disabled={locked} onClick={() => openStatusModal(record)}>
+                  <Button
+                    type="link"
+                    size="small"
+                    disabled={locked || record.codingStatus === '编译中'}
+                    onClick={() => openStatusModal(record)}
+                  >
                     修改状态
                   </Button>
                 </Auth>
@@ -283,14 +293,15 @@ function SubTaskModal({
                   <Button
                     type="link"
                     size="small"
-                    onClick={() => openModal(record, locked || record.status === '已结束')}
+                    disabled={locked || record.codingStatus === '编译中'}
+                    onClick={() => openModal(record, locked || record.codingStatus === '编译中' || record.status === '已结束')}
                   >
-                    {locked || record.status === '已结束' ? '查看' : '编辑'}
+                    {locked || record.codingStatus === '编译中' || record.status === '已结束' ? '查看' : '编辑'}
                   </Button>
                 </Auth>
                 <Auth perms="orchestration:aiTask:remove">
                   <Popconfirm title="确认删除该子任务？" onConfirm={() => remove(record.id)}>
-                    <Button type="link" size="small" danger disabled={locked}>
+                    <Button type="link" size="small" danger disabled={locked || record.codingStatus === '编译中'}>
                       删除
                     </Button>
                   </Popconfirm>
@@ -406,8 +417,8 @@ export default function AiTaskPage() {
   const [committingId, setCommittingId] = useState<number | null>(null);
 
   const load = useCallback(
-    async (next?: { page?: number; pageSize?: number }) => {
-      setLoading(true);
+    async (next?: { page?: number; pageSize?: number }, opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setLoading(true);
       try {
         const p = next?.page ?? page;
         const ps = next?.pageSize ?? pageSize;
@@ -424,7 +435,7 @@ export default function AiTaskPage() {
         setPage(p);
         setPageSize(ps);
       } finally {
-        setLoading(false);
+        if (!opts?.silent) setLoading(false);
       }
     },
     [keyword, sessionId, statusFilter, docFilter, page, pageSize],
@@ -439,7 +450,8 @@ export default function AiTaskPage() {
   const anyParentCoding = data.some((d) => d.codingStatus === '编译中' || d.codingActive);
   useEffect(() => {
     if (!anyParentCoding) return;
-    const t = setInterval(() => void load(), 5000);
+    // 轮询用静默刷新，避免每 5s 弹出整表 loading
+    const t = setInterval(() => void load(undefined, { silent: true }), 5000);
     return () => clearInterval(t);
   }, [anyParentCoding, load]);
 
@@ -685,7 +697,12 @@ export default function AiTaskPage() {
                       </Button>
                     </Auth>
                     <Auth perms="orchestration:aiTask:edit">
-                      <Button type="link" size="small" onClick={() => openStatusModal(record)}>
+                      <Button
+                        type="link"
+                        size="small"
+                        disabled={record.codingStatus === '编译中' || record.codingActive}
+                        onClick={() => openStatusModal(record)}
+                      >
                         修改状态
                       </Button>
                     </Auth>
@@ -752,6 +769,7 @@ export default function AiTaskPage() {
           docOptions={docOptions}
           open={subOpen}
           onClose={() => setSubOpen(false)}
+          onChanged={load}
         />
       )}
 
