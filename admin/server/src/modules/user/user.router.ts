@@ -98,6 +98,11 @@ router.get('/', requirePerms('system:user:list'), validate(querySchema, 'query')
   page(res, rows, count, paging.page, paging.pageSize);
 });
 
+/* 部门负责人候选（须定义在 /:id 之前，避免被 :id 捕获） */
+router.get('/options', requirePerms('system:user:list'), async (_req, res) => {
+  ok(res, await service.listUserOptions());
+});
+
 router.get('/:id', requirePerms('system:user:list'), validate(idSchema, 'params'), async (req, res) => {
   const { id } = req.params as unknown as z.infer<typeof idSchema>;
   ok(res, await service.getUser(auth(req), id));

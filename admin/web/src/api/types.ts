@@ -525,6 +525,13 @@ export interface UserItem {
   roleIds?: number[];
 }
 
+/** 部门负责人候选（来自用户管理列表） */
+export interface UserOption {
+  id: number;
+  nickname: string;
+  username: string;
+}
+
 export interface LoginLogItem {
   id: number;
   username: string;

@@ -32,14 +32,14 @@ router.get('/', requirePerms('system:dept:list'), validate(querySchema, 'query')
   ok(res, await service.listDepts(req.query as z.infer<typeof querySchema>));
 });
 
-router.post('/', requirePerms('system:dept:add'), operLog('部门管理', 'INSERT'), validate(deptSchema), async (req, res) => {
+router.post('/', requirePerms('system:dept:add'), operLog('组织架构', 'INSERT'), validate(deptSchema), async (req, res) => {
   ok(res, await service.createDept(req.body as z.infer<typeof deptSchema>), '新增成功');
 });
 
 router.put(
   '/:id',
   requirePerms('system:dept:edit'),
-  operLog('部门管理', 'UPDATE'),
+  operLog('组织架构', 'UPDATE'),
   validate(idSchema, 'params'),
   validate(deptSchema),
   async (req, res) => {
@@ -51,7 +51,7 @@ router.put(
 router.delete(
   '/:id',
   requirePerms('system:dept:remove'),
-  operLog('部门管理', 'DELETE'),
+  operLog('组织架构', 'DELETE'),
   validate(idSchema, 'params'),
   async (req, res) => {
     const { id } = req.params as unknown as z.infer<typeof idSchema>;

@@ -7,6 +7,7 @@ import {
   InputNumber,
   Modal,
   Popconfirm,
+  Select,
   Space,
   Switch,
   Table,
@@ -15,8 +16,8 @@ import {
   message,
 } from 'antd';
 import { PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
-import { deptApi } from '@/api';
-import type { DeptItem } from '@/api/types';
+import { deptApi, userApi } from '@/api';
+import type { DeptItem, UserOption } from '@/api/types';
 import { Auth } from '@/components/Auth';
 import { tableExpandIcon } from '@/components/TableExpandIcon';
 
@@ -42,6 +43,7 @@ export default function DeptPage() {
   const [keyword, setKeyword] = useState('');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<DeptItem | null>(null);
+  const [userOptions, setUserOptions] = useState<UserOption[]>([]);
   const [form] = Form.useForm<FormValues>();
 
   const load = useCallback(async (name?: string) => {
@@ -55,6 +57,7 @@ export default function DeptPage() {
 
   useEffect(() => {
     void load();
+    void userApi.options().then(setUserOptions).catch(() => setUserOptions([]));
   }, [load]);
 
   const openModal = (record?: DeptItem, parentId?: number) => {
@@ -98,7 +101,7 @@ export default function DeptPage() {
       <Card className="search-bar" styles={{ body: { paddingBottom: 16 } }}>
         <Space wrap>
           <Input
-            placeholder="部门名称"
+            placeholder="组织名称"
             allowClear
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
@@ -122,11 +125,11 @@ export default function DeptPage() {
 
       <Card
         className="page-card"
-        title="部门管理"
+        title="组织架构"
         extra={
           <Auth perms="system:dept:add">
             <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal()}>
-              新增部门
+              新增组织
             </Button>
           </Auth>
         }
@@ -138,7 +141,7 @@ export default function DeptPage() {
           pagination={false}
           expandable={{ defaultExpandAllRows: true, expandIcon: tableExpandIcon }}
           columns={[
-            { title: '部门名称', dataIndex: 'name' },
+            { title: '组织名称', dataIndex: 'name' },
             { title: '负责人', dataIndex: 'leader', render: (v) => v || '-' },
             { title: '电话', dataIndex: 'phone', render: (v) => v || '-' },
             { title: '排序', dataIndex: 'orderNum', width: 80 },
@@ -164,7 +167,7 @@ export default function DeptPage() {
                     </Button>
                   </Auth>
                   <Auth perms="system:dept:remove">
-                    <Popconfirm title="确认删除该部门？" onConfirm={() => remove(record.id)}>
+                    <Popconfirm title="确认删除该组织？" onConfirm={() => remove(record.id)}>
                       <Button type="link" size="small" danger>
                         删除
                       </Button>
@@ -179,28 +182,37 @@ export default function DeptPage() {
 
       <Modal
         open={open}
-        title={editing ? '编辑部门' : '新增部门'}
+        title={editing ? '编辑组织' : '新增组织'}
         onCancel={() => setOpen(false)}
         onOk={submit}
         destroyOnHidden
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="parentId" label="上级部门">
+          <Form.Item name="parentId" label="上级组织">
             <TreeSelect
               allowClear
               treeDefaultExpandAll
-              placeholder="不选则为顶级部门"
+              placeholder="不选则为顶级组织"
               treeData={[
-                { id: 0, parentId: -1, name: '顶级部门', ancestors: '', orderNum: 0, leader: null, phone: null, status: 1, children: toTreeSelectData(data, editing?.id) } as DeptItem,
+                { id: 0, parentId: -1, name: '顶级组织', ancestors: '', orderNum: 0, leader: null, phone: null, status: 1, children: toTreeSelectData(data, editing?.id) } as DeptItem,
               ]}
               fieldNames={{ label: 'name', value: 'id', children: 'children' }}
             />
           </Form.Item>
-          <Form.Item name="name" label="部门名称" rules={[{ required: true, message: '请输入部门名称' }]}>
-            <Input placeholder="请输入部门名称" />
+          <Form.Item name="name" label="组织名称" rules={[{ required: true, message: '请输入组织名称' }]}>
+            <Input placeholder="请输入组织名称" />
           </Form.Item>
           <Form.Item name="leader" label="负责人">
-            <Input placeholder="请输入负责人" />
+            <Select
+              allowClear
+              showSearch
+              placeholder="请从用户管理列表中选取"
+              optionFilterProp="label"
+              options={userOptions.map((u) => ({
+                value: u.nickname,
+                label: u.nickname ? `${u.nickname}（${u.username}）` : u.username,
+              }))}
+            />
           </Form.Item>
           <Form.Item name="phone" label="联系电话">
             <Input placeholder="请输入联系电话" />

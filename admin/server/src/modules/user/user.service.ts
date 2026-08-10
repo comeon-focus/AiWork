@@ -79,6 +79,16 @@ export async function listUsers(
   });
 }
 
+/** 部门负责人候选：返回全部未删除用户（id / nickname / username） */
+export async function listUserOptions(): Promise<{ id: number; nickname: string; username: string }[]> {
+  const rows = await User.findAll({
+    where: { delFlag: 0 },
+    attributes: ['id', 'nickname', 'username'],
+    order: [['id', 'ASC']],
+  });
+  return rows.map((u) => ({ id: u.id, nickname: u.nickname, username: u.username }));
+}
+
 export async function getUser(auth: AuthUser, id: number) {
   const user = await findUserInScope(auth, id);
   return { ...user.toJSON(), roleIds: (user.roles ?? []).map((r) => r.id) };

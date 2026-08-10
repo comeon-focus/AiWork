@@ -34,6 +34,7 @@ import type {
   SmartDocInput,
   TokenPair,
   UserItem,
+  UserOption,
 } from './types';
 
 /** AI 润色为长耗时任务，单独放宽超时时间 */
@@ -59,6 +60,7 @@ export interface UserQuery {
 
 export const userApi = {
   list: (params: UserQuery) => http.get<PageResult<UserItem>>('/users', params),
+  options: () => http.get<UserOption[]>('/users/options'),
   detail: (id: number) => http.get<UserItem>(`/users/${id}`),
   create: (body: Partial<UserItem> & { password: string }) => http.post<UserItem>('/users', body),
   update: (id: number, body: Partial<UserItem>) => http.put<UserItem>(`/users/${id}`, body),
