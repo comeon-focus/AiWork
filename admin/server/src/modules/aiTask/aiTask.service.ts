@@ -187,9 +187,13 @@ export async function updateAiTaskStatus(id: number, status: AITaskStatus) {
   const task = await AITask.findByPk(id);
   if (!task) throw ApiError.notFound('AI任务不存在');
 
-  // 结束任务前：若正在 AICoding，或代码库有未提交改动，则禁止结束
+  // 父子锁定规则：父任务自身在 AICoding，或任一子任务在 AICoding → 父任务状态不可改
+  if (await isTaskLocked(task.id)) {
+    throw ApiError.badRequest('该任务正在 AICoding 中，无法修改状态');
+  }
+
+  // 结束任务前：若代码库有未提交改动，则禁止结束
   if (status === '已结束') {
-    if (await isTaskLocked(task.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法结束');
     const sid = task.sessionId;
     if (fs.existsSync(taskWorkspaceDir(sid)) && (await hasUncommittedChanges(sid))) {
       throw ApiError.badRequest('该任务代码库存在未提交的修改，无法结束任务（请先提交或处理改动）');

@@ -71,7 +71,8 @@ export async function createAiSubTask(input: AiSubTaskInput) {
 export async function updateAiSubTask(id: number, input: AiSubTaskInput) {
   const task = await AiSubTask.findByPk(id);
   if (!task) throw ApiError.notFound('AI子任务不存在');
-  if (await isTaskLocked(task.parentId)) throw ApiError.badRequest('该任务正在 AICoding 中，无法修改');
+  // 仅当该子任务自身正在 AICoding 时锁定；父任务或兄弟任务在 AICoding 不影响它
+  if (task.codingStatus === '编译中') throw ApiError.badRequest('该子任务正在 AICoding 中，无法修改');
 
   const patch: Record<string, unknown> = {
     parentId: input.parentId,
@@ -90,10 +91,13 @@ export async function updateAiSubTask(id: number, input: AiSubTaskInput) {
 export async function updateAiSubTaskStatus(id: number, status: AITaskStatus) {
   const task = await AiSubTask.findByPk(id, { include: [{ model: AITask, as: 'parent' }] });
   if (!task) throw ApiError.notFound('AI子任务不存在');
+  // 仅该子任务自身正在 AICoding 时锁定（兄弟任务、父任务在 AICoding 均不影响它）
+  if (task.codingStatus === '编译中') {
+    throw ApiError.badRequest('该子任务正在 AICoding 中，无法修改状态');
+  }
   const parent = (task as unknown as { parent?: AITask }).parent!;
-  // 结束子任务前同样校验：父任务正在 AICoding，或共享代码库有未提交改动（会阻断后续父任务结束）
+  // 结束子任务前校验：共享代码库有未提交改动（会阻断后续父任务结束）
   if (status === '已结束') {
-    if (await isTaskLocked(parent.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法结束');
     const sid = parent.sessionId;
     if (sid && fs.existsSync(taskWorkspaceDir(sid)) && (await hasUncommittedChanges(sid))) {
       throw ApiError.badRequest('该任务代码库存在未提交的修改，无法结束任务（请先提交或处理改动）');
@@ -108,7 +112,8 @@ export async function updateAiSubTaskStatus(id: number, status: AITaskStatus) {
 export async function removeAiSubTask(id: number) {
   const task = await AiSubTask.findByPk(id);
   if (!task) throw ApiError.notFound('AI子任务不存在');
-  if (await isTaskLocked(task.parentId)) throw ApiError.badRequest('该任务正在 AICoding 中，无法删除');
+  // 仅当该子任务自身正在 AICoding 时锁定
+  if (task.codingStatus === '编译中') throw ApiError.badRequest('该子任务正在 AICoding 中，无法删除');
   await task.destroy();
 }
 
