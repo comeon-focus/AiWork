@@ -5,6 +5,8 @@ import {
   AiSubTask,
   SmartDoc,
   CodeRepo,
+  TaskQueue,
+  TaskQueueItem,
   AI_TASK_STATUS,
   type AITaskStatus,
   type AicodingStatus,
@@ -65,6 +67,10 @@ export async function listAiTasks(filter: {
   if (filter.sessionId) where.sessionId = { [Op.like]: `%${filter.sessionId}%` };
   if (filter.status) where.status = filter.status;
   if (filter.smartDocId) where.smartDocId = filter.smartDocId;
+
+  // 已被未完成队列关联的任务交由队列统一调度，列表里不再展示
+  const occupied = await listQueueOccupiedTaskIds();
+  if (occupied.length) where.id = { [Op.notIn]: occupied };
 
   const { rows, count } = await AITask.findAndCountAll({
     where,
@@ -325,6 +331,52 @@ export async function isTaskLocked(parentId: number): Promise<boolean> {
   return !!sub;
 }
 
+/**
+ * 被「未完成队列」占用的父任务 id 列表。
+ * TaskQueueItem.taskId 存的始终是父任务 id（子任务条目也一样），
+ * 因此只要父任务或其任一子任务入队，整个父任务都会被算进来。
+ * 队列变为「已执行」、队列被删除、条目被移出队列时自动释放，无需额外维护状态。
+ */
+export async function listQueueOccupiedTaskIds(excludeQueueId?: number): Promise<number[]> {
+  const rows = await TaskQueueItem.findAll({
+    attributes: ['taskId'],
+    group: ['taskId'],
+    include: [
+      {
+        model: TaskQueue,
+        as: 'queue',
+        attributes: [],
+        required: true,
+        where: {
+          status: { [Op.ne]: '已执行' },
+          ...(excludeQueueId ? { id: { [Op.ne]: excludeQueueId } } : {}),
+        },
+      },
+    ],
+    raw: true,
+  });
+  return (rows as unknown as { taskId: number }[]).map((r) => r.taskId);
+}
+
+/**
+ * 队列执行期间，其关联的任务不允许被手动 AICoding，否则会和队列抢同一个代码库。
+ * 一个父任务下的父/子任务共用同一套代码库，所以只要该父任务的任一队列项
+ * （父任务本身，或它的任一子任务）处于「执行中」队列，整个父任务（含全部子任务）
+ * 都禁止手动 AICoding——即便只是某个子任务被占用，父任务本体和其它兄弟子任务也一并锁定。
+ * 队列引擎自己调用时必须跳过该校验（fromQueue），否则会把自己拦死。
+ * 这里直查模型而不引 taskQueue.service，避免 service 之间循环依赖。
+ */
+export async function assertParentNotInRunningQueue(parentId: number): Promise<void> {
+  const item = await TaskQueueItem.findOne({
+    where: { taskId: parentId },
+    include: [{ model: TaskQueue, as: 'queue', where: { status: '执行中' }, attributes: ['name'], required: true }],
+  });
+  if (item) {
+    const name = (item as unknown as { queue?: { name: string } }).queue?.name ?? '';
+    throw ApiError.badRequest(`该任务已被任务队列『${name}』占用且队列正在执行，请等待队列完成或暂停后再操作`);
+  }
+}
+
 /* ── AICoding 执行流程 ─────────────────────────── */
 
 /** 触发人，用于编译记录归属 */
@@ -419,7 +471,11 @@ export async function startAicodingRun(input: StartRunInput): Promise<void> {
 }
 
 /** 启动父任务 AICoding：调用 codebuddy 基于关联智能文档在代码库下改代码 */
-export async function aicodingAITask(id: number, actor?: AicodingActor | null) {
+export async function aicodingAITask(
+  id: number,
+  actor?: AicodingActor | null,
+  opts?: { fromQueue?: boolean },
+) {
   const task = await AITask.findByPk(id);
   if (!task) throw ApiError.notFound('AI任务不存在');
   if (task.status === '已结束') throw ApiError.badRequest('已结束的任务不能启动 AICoding');
@@ -431,6 +487,7 @@ export async function aicodingAITask(id: number, actor?: AicodingActor | null) {
     throw ApiError.badRequest('代码库尚未拉取，无法启动 AICoding（请确认任务创建时成功拉取了代码库）');
   }
   if (await isTaskLocked(task.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法重复启动');
+  if (!opts?.fromQueue) await assertParentNotInRunningQueue(task.id);
   if (await activeCodingParentCount(task.id) >= 2) {
     throw ApiError.badRequest('最多允许两个任务同时进行 AICoding，请稍后再试');
   }

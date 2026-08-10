@@ -12,6 +12,7 @@ import { taskWorkspaceDir, hasUncommittedChanges } from '../../utils/git.js';
 import {
   isTaskLocked,
   activeCodingParentCount,
+  assertParentNotInRunningQueue,
   startAicodingRun,
   buildAicodingPrompt,
   type AicodingActor,
@@ -118,7 +119,11 @@ export async function removeAiSubTask(id: number) {
 }
 
 /** 启动子任务 AICoding：复用父任务 sessionId 会话（共享对话上下文），基于子任务自身关联智能文档改代码 */
-export async function aicodingAiSubTask(id: number, actor?: AicodingActor | null) {
+export async function aicodingAiSubTask(
+  id: number,
+  actor?: AicodingActor | null,
+  opts?: { fromQueue?: boolean },
+) {
   const sub = await AiSubTask.findByPk(id, { include: [{ model: AITask, as: 'parent' }] });
   if (!sub) throw ApiError.notFound('AI子任务不存在');
   const parent = (sub as unknown as { parent?: AITask }).parent!;
@@ -132,6 +137,7 @@ export async function aicodingAiSubTask(id: number, actor?: AicodingActor | null
     throw ApiError.badRequest('代码库尚未拉取，无法启动 AICoding（请确认父任务创建时成功拉取了代码库）');
   }
   if (await isTaskLocked(parent.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法重复启动');
+  if (!opts?.fromQueue) await assertParentNotInRunningQueue(parent.id);
   if (await activeCodingParentCount(parent.id) >= 2) {
     throw ApiError.badRequest('最多允许两个任务同时进行 AICoding，请稍后再试');
   }

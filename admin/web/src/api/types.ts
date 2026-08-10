@@ -381,6 +381,89 @@ export interface AiGitCommitItem {
   createdAt: string;
 }
 
+/* ── 任务队列 ─────────────────────────────────────── */
+
+export type TaskQueueStatus = '待执行' | '执行中' | '暂停中' | '已执行';
+
+export const TASK_QUEUE_STATUS: TaskQueueStatus[] = ['待执行', '执行中', '暂停中', '已执行'];
+
+export const TASK_QUEUE_STATUS_COLOR: Record<TaskQueueStatus, string> = {
+  待执行: 'default',
+  执行中: 'processing',
+  暂停中: 'warning',
+  已执行: 'success',
+};
+
+export type TaskQueueItemStatus = '待执行' | '执行中' | '已完成' | '失败';
+
+export const TASK_QUEUE_ITEM_STATUS_COLOR: Record<TaskQueueItemStatus, string> = {
+  待执行: 'default',
+  执行中: 'processing',
+  已完成: 'success',
+  失败: 'error',
+};
+
+/** 队列内的一个执行单元，对应一个 AI 父任务或子任务 */
+export interface TaskQueueItemRow {
+  id: number;
+  queueId: number;
+  taskId: number;
+  /** 为 null 表示这一项是父任务本身 */
+  subTaskId: number | null;
+  taskType: '父任务' | '子任务';
+  /** 入队时的任务标题快照 */
+  title: string;
+  sessionId: string | null;
+  /** 执行顺序，升序 */
+  orderNum: number;
+  status: TaskQueueItemStatus;
+  errorMsg: string | null;
+  /** 关联的编译记录 id，用于跳转编译详情 */
+  compileLogId: number | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface TaskQueueRow {
+  id: number;
+  name: string;
+  status: TaskQueueStatus;
+  /** 已提交暂停请求，等待当前任务收尾 */
+  pauseRequested: boolean;
+  currentItemId: number | null;
+  remark: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  creatorId: number | null;
+  creatorName: string | null;
+  createdAt: string;
+  /** 以下为服务端聚合出的统计字段 */
+  totalItems: number;
+  doneItems: number;
+  failedItems: number;
+  /** 已完成 + 失败，即执行进度的分子 */
+  finishedItems: number;
+  /** 仅详情接口返回 */
+  items?: TaskQueueItemRow[];
+}
+
+export interface TaskQueueInput {
+  name: string;
+  remark?: string | null;
+  /** 数组顺序即执行顺序 */
+  items: { taskId: number; subTaskId?: number | null }[];
+}
+
+/** 关联任务选择器的候选项：父任务 + 其子任务 */
+export interface AiTaskOptionNode {
+  id: number;
+  title: string;
+  sessionId: string | null;
+  status: string;
+  codingStatus: string;
+  children?: { id: number; parentId: number; title: string; status: string; codingStatus: string }[];
+}
+
 /** 智能文档：需求经 AI 润色后生成的 Markdown 文档 */
 export interface SmartDocItem {
   id: number;

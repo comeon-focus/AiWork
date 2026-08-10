@@ -22,6 +22,12 @@ import {
   type AiCompileTaskType,
 } from './aiCompileLog.js';
 import { AiGitCommit, AI_GIT_COMMIT_STATUS, type AiGitCommitStatus } from './aiGitCommit.js';
+import { TaskQueue, TASK_QUEUE_STATUS, type TaskQueueStatus } from './taskQueue.js';
+import {
+  TaskQueueItem,
+  TASK_QUEUE_ITEM_STATUS,
+  type TaskQueueItemStatus,
+} from './taskQueueItem.js';
 import { Demand, DEMAND_STATUS, type DemandStatus } from './demand.js';
 import { DemandFile } from './demandFile.js';
 import { RequirementDemand } from './requirementDemand.js';
@@ -109,6 +115,10 @@ DataTaskProject.belongsTo(DataTask, { foreignKey: 'taskId', as: 'task' });
 /* ── 数据任务 ↔ 数据模拟项目 ─────────────────────── */
 DataTask.belongsTo(DataSimProject, { foreignKey: 'projectId', targetKey: 'projectId', as: 'project' });
 
+/* ── 任务队列 ↔ 队列条目 ─────────────────────────── */
+TaskQueue.hasMany(TaskQueueItem, { foreignKey: 'queueId', as: 'items' });
+TaskQueueItem.belongsTo(TaskQueue, { foreignKey: 'queueId', as: 'queue' });
+
 export {
   Dept,
   User,
@@ -139,6 +149,12 @@ export {
   AiGitCommit,
   AI_GIT_COMMIT_STATUS,
   type AiGitCommitStatus,
+  TaskQueue,
+  TASK_QUEUE_STATUS,
+  type TaskQueueStatus,
+  TaskQueueItem,
+  TASK_QUEUE_ITEM_STATUS,
+  type TaskQueueItemStatus,
   Demand,
   DemandFile,
   RequirementDemand,

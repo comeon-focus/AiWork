@@ -282,6 +282,20 @@ const MENU_SEED: MenuSeed[] = [
           { name: '删除记录', type: MenuType.BUTTON, perms: 'orchestration:gitCommit:remove' },
         ],
       },
+      {
+        name: '任务队列',
+        type: MenuType.MENU,
+        path: '/ai-orchestration/task-queue',
+        component: 'aiOrchestration/taskQueue/index',
+        icon: 'OrderedListOutlined',
+        perms: 'orchestration:taskQueue:list',
+        children: [
+          { name: '新增队列', type: MenuType.BUTTON, perms: 'orchestration:taskQueue:add' },
+          { name: '编辑队列', type: MenuType.BUTTON, perms: 'orchestration:taskQueue:edit' },
+          { name: '删除队列', type: MenuType.BUTTON, perms: 'orchestration:taskQueue:remove' },
+          { name: '执行队列', type: MenuType.BUTTON, perms: 'orchestration:taskQueue:execute' },
+        ],
+      },
     ],
   },
   {

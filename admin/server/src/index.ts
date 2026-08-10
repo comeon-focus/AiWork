@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import { config } from './config/index.js';
 import { sequelize } from './db/index.js';
 import { recoverStaleCompileLogs } from './modules/aiCompileLog/aiCompileLog.service.js';
+import { recoverStaleTaskQueues } from './modules/taskQueue/taskQueue.service.js';
 import { killAllRuns } from './utils/codebuddy.js';
 
 async function bootstrap() {
@@ -18,6 +19,11 @@ async function bootstrap() {
   // 否则 isTaskLocked 会把这些任务永久锁死：不能编辑、结束、删除、重跑
   await recoverStaleCompileLogs().catch((e: Error) =>
     console.error('[compileLog] 回收残留编译记录失败:', e.message),
+  );
+
+  // 顺序必须在 recoverStaleCompileLogs 之后：先把 codingStatus 翻离「编译中」，队列才能安全续跑
+  await recoverStaleTaskQueues().catch((e: Error) =>
+    console.error('[taskQueue] 回收残留队列失败:', e.message),
   );
 
   createApp().listen(config.port, () => {

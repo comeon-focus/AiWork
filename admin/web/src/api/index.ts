@@ -32,6 +32,10 @@ import type {
   RoleItem,
   SmartDocItem,
   SmartDocInput,
+  TaskQueueRow,
+  TaskQueueInput,
+  TaskQueueStatus,
+  AiTaskOptionNode,
   TokenPair,
   UserItem,
   UserOption,
@@ -195,6 +199,24 @@ export const aiGitCommitApi = {
   /** 详情比列表多一个改动明细字段 */
   detail: (id: number) => http.get<AiGitCommitItem>(`/ai-git-commits/${id}`),
   remove: (id: number) => http.delete<null>(`/ai-git-commits/${id}`),
+};
+
+export const taskQueueApi = {
+  list: (params?: { name?: string; status?: TaskQueueStatus; page?: number; pageSize?: number }) =>
+    http.get<PageResult<TaskQueueRow>>('/task-queues', params),
+  /** 详情含 items 明细，前端按需轮询 */
+  detail: (id: number) => http.get<TaskQueueRow>(`/task-queues/${id}`),
+  /** 可关联的 AI 任务候选（父任务 + 子任务）；编辑时传本队列 id，避免自己的条目被过滤掉 */
+  taskOptions: (excludeQueueId?: number) =>
+    http.get<AiTaskOptionNode[]>('/task-queues/task-options', excludeQueueId ? { excludeQueueId } : undefined),
+  create: (body: TaskQueueInput) => http.post<TaskQueueRow>('/task-queues', body),
+  update: (id: number, body: TaskQueueInput) => http.put<TaskQueueRow>(`/task-queues/${id}`, body),
+  /** 仅调整未执行任务的顺序，暂停中队列走这个接口 */
+  reorder: (id: number, itemIds: number[]) => http.put<null>(`/task-queues/${id}/items/order`, { itemIds }),
+  start: (id: number) => http.post<{ status: TaskQueueStatus }>(`/task-queues/${id}/start`),
+  pause: (id: number) =>
+    http.post<{ status: TaskQueueStatus; pauseRequested: boolean }>(`/task-queues/${id}/pause`),
+  remove: (id: number) => http.delete<null>(`/task-queues/${id}`),
 };
 
 export const smartDocApi = {
