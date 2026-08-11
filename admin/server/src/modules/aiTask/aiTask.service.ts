@@ -119,35 +119,32 @@ export async function createAiTask(input: AITaskInput) {
   }
 
   // 拉取代码库到 AiWorkSpace/<sessionId>（外层文件夹以 SessionID 命名），
-  // 并切换到创建任务时填入的代码分支；二者任一失败则整条创建失败，并清理已拉取的目录。
+  // 并切换到创建任务时填入的代码分支。拉取 / 切换 / 建分支 / 写库 任一环节失败，
+  // 都必须把已下载的目录删掉，避免无主目录堆积占用磁盘。
   // 子任务与父任务共用一套代码库，无需单独处理。
+  let clonedDir: string | null = null;
   if (repoUrl) {
-    let dir: string;
+    const target = taskWorkspaceDir(sessionId);
     try {
-      dir = await cloneRepo(repoUrl, sessionId);
-    } catch (e) {
-      // cloneRepo 内部已清理残留目录
-      throw ApiError.badRequest(`代码库拉取失败，AI 任务创建中止：${(e as Error).message}`);
-    }
-    if (input.branch) {
-      try {
-        await checkoutBranch(dir, input.branch);
-      } catch (e) {
-        const msg = (e as Error).message;
-        if (isBranchNotFound(msg)) {
-          // 分支不存在：基于当前 HEAD 创建本地分支并推送远端（创建远程分支）
-          try {
-            await createAndPushBranch(dir, input.branch);
-          } catch (e2) {
-            await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
-            throw ApiError.badRequest(`远程分支创建失败『${input.branch}』，AI 任务创建中止：${(e2 as Error).message}`);
+      clonedDir = await cloneRepo(repoUrl, sessionId);
+      if (input.branch) {
+        try {
+          await checkoutBranch(clonedDir, input.branch);
+        } catch (e) {
+          const msg = (e as Error).message;
+          if (isBranchNotFound(msg)) {
+            // 分支不存在：基于当前 HEAD 创建本地分支并推送远端（创建远程分支）
+            await createAndPushBranch(clonedDir, input.branch);
+          } else {
+            throw ApiError.badRequest(`代码分支切换失败『${input.branch}』，AI 任务创建中止：${msg}`);
           }
-        } else {
-          // 其它切换错误（如本地未提交冲突）：删除已拉取的 SessionID 文件夹，避免残留
-          await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
-          throw ApiError.badRequest(`代码分支切换失败『${input.branch}』，AI 任务创建中止：${msg}`);
         }
       }
+    } catch (e) {
+      // 拉取 / 切换 / 建分支任一环节失败：删除已下载的目录（cloneRepo 自身已清理时这里是兜底）
+      await fs.promises.rm(target, { recursive: true, force: true }).catch(() => undefined);
+      if (e instanceof ApiError) throw e;
+      throw ApiError.badRequest(`代码库拉取失败，AI 任务创建中止：${(e as Error).message}`);
     }
   }
 
@@ -165,8 +162,8 @@ export async function createAiTask(input: AITaskInput) {
       creatorName: input.creatorName ?? null,
     });
   } catch (e) {
-    // 记录已创建则清理已拉取的代码目录，避免残留
-    if (repoUrl) await fs.promises.rm(taskWorkspaceDir(sessionId), { recursive: true, force: true });
+    // 写库失败：删除已拉取的代码目录，避免无主目录堆积占盘
+    if (clonedDir) await fs.promises.rm(clonedDir, { recursive: true, force: true }).catch(() => undefined);
     throw e;
   }
   return task;
