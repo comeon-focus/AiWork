@@ -70,6 +70,14 @@ body {
   z-index: 2000;
 }
 
+/* 隐藏 ByteMD 编辑器右上角的「源码(Source/GitHub)」按钮：
+   该按钮是内置右工具栏的最后一项（跳转到 bytemd 的 GitHub 仓库），
+   1.22 版的 Editor 没有 toolbar 自定义 prop，只能从这里用 CSS 移除。
+   本项目仅用 gfm 插件（只往左工具栏加按钮），故该项始终是右工具栏最后一个子元素。 */
+.bytemd-toolbar-right > .bytemd-toolbar-icon:last-child {
+  display: none !important;
+}
+
 /* CodeMirror 代码编辑框：与 antd 输入框风格对齐（边框 / 圆角 / 聚焦环） */
 .code-editor .cm-editor {
   border: 1px solid #d9d9d9;
