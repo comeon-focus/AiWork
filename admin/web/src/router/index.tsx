@@ -16,6 +16,18 @@ function FullscreenLoading() {
   );
 }
 
+/** 路由守卫：已登录用户访问登录页时，直接重定向至首页（或其他原本想去的页面） */
+function RedirectIfAuthed({ children }: { children: ReactNode }) {
+  const hasToken = useAuthStore((s) => s.hasToken);
+  const location = useLocation();
+  const from = (location.state as { from?: string } | null)?.from;
+
+  if (hasToken) {
+    return <Navigate to={from ?? '/'} replace />;
+  }
+  return <>{children}</>;
+}
+
 /** 路由守卫：未登录跳登录页；已登录但权限未就绪则先拉 profile */
 function RequireAuth({ children }: { children: ReactNode }) {
   const hasToken = useAuthStore((s) => s.hasToken);
@@ -45,7 +57,7 @@ export function AppRoutes() {
   const landing = useMemo(() => firstAccessiblePath(routes), [routes]);
 
   const element = useRoutes([
-    { path: '/login', element: <Login /> },
+    { path: '/login', element: <RedirectIfAuthed><Login /></RedirectIfAuthed> },
     { path: '/403', element: <Forbidden /> },
     {
       path: '/',
