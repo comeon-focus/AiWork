@@ -45,6 +45,8 @@ import type {
 const AI_TIMEOUT = 300000;
 /** git 提交推送需要走网络（SSH 推远端），比默认 15s 慢得多 */
 const GIT_TIMEOUT = 120000;
+/** 新建 AI 任务要拉取代码库 + 切换/创建分支，网络耗时远超默认 15s */
+const AI_TASK_CREATE_TIMEOUT = 180000;
 
 export const authApi = {
   login: (body: { username: string; password: string }) => http.post<TokenPair>('/auth/login', body),
@@ -149,7 +151,7 @@ export const aiTaskApi = {
     page?: number;
     pageSize?: number;
   }) => http.get<PageResult<AITaskItem>>('/ai-tasks', params),
-  create: (body: AITaskInput) => http.post<AITaskItem>('/ai-tasks', body),
+  create: (body: AITaskInput) => http.post<AITaskItem>('/ai-tasks', body, { timeout: AI_TASK_CREATE_TIMEOUT }),
   update: (id: number, body: AITaskInput) => http.put<AITaskItem>(`/ai-tasks/${id}`, body),
   updateStatus: (id: number, status: AITaskStatus) =>
     http.patch<AITaskItem>(`/ai-tasks/${id}/status`, { status }),
