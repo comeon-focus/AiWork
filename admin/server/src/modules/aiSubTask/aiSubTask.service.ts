@@ -156,6 +156,7 @@ export async function aicodingAiSubTask(
       smartDocId: sub.smartDocId,
       branch: sub.branch ?? parent.branch,
       prompt,
+      model: parent.model,
       actor,
     });
   } catch (e) {

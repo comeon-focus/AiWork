@@ -195,6 +195,8 @@ export interface AITaskItem {
   smartDoc?: { id: number; title: string } | null;
   /** 代码分支 */
   branch?: string | null;
+  /** 选用的 AI 模型；为空/null 表示使用系统默认模型 */
+  model?: string | null;
   /** 任务状态：待开始 / 进行中 / 已结束 */
   status: AITaskStatus;
   /** AICoding 状态：暂无 / 编译中 / 编译成功 / 编译失败 */
@@ -227,6 +229,8 @@ export interface AITaskInput {
   summary?: string | null;
   smartDocId?: number | null;
   branch?: string | null;
+  /** 选用的 AI 模型；为空/null 表示使用系统默认模型 */
+  model?: string | null;
   status?: AITaskStatus;
 }
 

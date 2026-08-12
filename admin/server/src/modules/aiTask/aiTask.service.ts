@@ -29,7 +29,7 @@ import {
   GitAfterCommitError,
   type CommitResult,
 } from '../../utils/git.js';
-import { runAICoding, resolveModel } from '../../utils/codebuddy.js';
+import { runAICoding, resolveModel, MODEL_WHITELIST } from '../../utils/codebuddy.js';
 import {
   startCompileLog,
   appendCompileLine,
@@ -47,10 +47,20 @@ export interface AITaskInput {
   smartDocId?: number | null;
   /** 代码分支 */
   branch?: string | null;
+  /** 选用的 AI 模型；为空/null 表示使用系统默认模型 */
+  model?: string | null;
   /** 任务状态：待开始 / 进行中 / 已结束 */
   status?: AITaskStatus;
   creatorId?: number | null;
   creatorName?: string | null;
+}
+
+/**
+ * 可选 AI 模型列表（白名单）与系统默认模型。
+ * 前端「AI 任务」表单据此渲染下拉选项；defaultModel 为系统配置生效的默认模型（可能为 null）。
+ */
+export function listAiModels() {
+  return { models: MODEL_WHITELIST, defaultModel: resolveModel() };
 }
 
 export async function listAiTasks(filter: {
@@ -156,6 +166,7 @@ export async function createAiTask(input: AITaskInput) {
       sessionId,
       smartDocId: input.smartDocId ?? null,
       branch: input.branch?.trim() || null,
+      model: input.model?.trim() || null,
       status: input.status ?? '待开始',
       codingStatus: '暂无',
       creatorId: input.creatorId ?? null,
@@ -179,6 +190,7 @@ export async function updateAiTask(id: number, input: AITaskInput) {
     summary: input.summary?.trim() || null,
     smartDocId: input.smartDocId ?? null,
     branch: input.branch?.trim() || null,
+    model: input.model?.trim() || null,
   };
   if (input.status !== undefined) patch.status = input.status;
   await task.update(patch);
@@ -393,6 +405,8 @@ export interface StartRunInput {
   smartDocId: number | null;
   branch: string | null;
   prompt: string;
+  /** 显式选用的 AI 模型；为空/null 表示使用系统默认模型 */
+  model?: string | null;
   actor?: AicodingActor | null;
 }
 
@@ -429,6 +443,9 @@ async function writeBackCodingStatus(input: StartRunInput, status: AicodingStatu
  */
 export async function startAicodingRun(input: StartRunInput): Promise<void> {
   const before = await snapshotRepo(input.repoDir);
+  // 模型优先级：任务显式指定（且合法）→ 系统配置默认模型 → 不指定（走 codebuddy 默认）
+  const resolvedModel =
+    input.model && MODEL_WHITELIST.includes(input.model) ? input.model : resolveModel();
   const log = await startCompileLog({
     sessionId: input.sessionId,
     taskId: input.taskId,
@@ -437,7 +454,7 @@ export async function startAicodingRun(input: StartRunInput): Promise<void> {
     title: input.title,
     smartDocId: input.smartDocId,
     branch: input.branch ?? before.branch,
-    model: resolveModel(),
+    model: resolvedModel,
     prompt: input.prompt,
     headBefore: before.head,
     creatorId: input.actor?.id ?? null,
@@ -503,6 +520,7 @@ export async function aicodingAITask(
       smartDocId: task.smartDocId,
       branch: task.branch,
       prompt,
+      model: task.model,
       actor,
     });
   } catch (e) {

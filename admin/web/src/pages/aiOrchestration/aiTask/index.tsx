@@ -34,6 +34,8 @@ interface FormValues {
   summary?: string;
   smartDocId?: number | null;
   branch?: string;
+  /** 选用的 AI 模型；空字符串表示使用系统默认模型 */
+  model?: string;
   status?: AITaskStatus;
 }
 
@@ -404,6 +406,8 @@ export default function AiTaskPage() {
   const [editing, setEditing] = useState<AITaskItem | null>(null);
   const [viewOnly, setViewOnly] = useState(false);
   const [docOptions, setDocOptions] = useState<SmartDocItem[]>([]);
+  /** 可选 AI 模型列表（白名单），用于新增/编辑表单的下拉选项 */
+  const [modelList, setModelList] = useState<string[]>([]);
   const [subParent, setSubParent] = useState<AITaskItem | null>(null);
   const [subOpen, setSubOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -444,6 +448,7 @@ export default function AiTaskPage() {
   useEffect(() => {
     void load();
     void smartDocApi.list().then(setDocOptions).catch(() => setDocOptions([]));
+    void aiTaskApi.models().then((r) => setModelList(r.models)).catch(() => setModelList([]));
   }, [load]);
 
   // AICoding 异步进行中：自动轮询以反映 编译中 → 暂无/编译成功/编译失败
@@ -466,11 +471,12 @@ export default function AiTaskPage() {
         summary: record.summary ?? undefined,
         smartDocId: record.smartDocId ?? null,
         branch: record.branch ?? undefined,
+        model: record.model ?? '',
         status: record.status,
       });
     } else {
       setEditing(null);
-      form.setFieldsValue({ title: '', summary: undefined, smartDocId: null, branch: undefined, status: '待开始' });
+      form.setFieldsValue({ title: '', summary: undefined, smartDocId: null, branch: undefined, model: '', status: '待开始' });
     }
     setOpen(true);
   };
@@ -486,6 +492,7 @@ export default function AiTaskPage() {
       summary: values.summary ?? null,
       smartDocId: values.smartDocId ?? null,
       branch: values.branch ?? null,
+      model: values.model ? values.model : null,
       status: values.status ?? '待开始',
     };
     if (editing) {
@@ -677,6 +684,12 @@ export default function AiTaskPage() {
             },
             { title: '代码分支', dataIndex: 'branch', width: 160, render: (v: string | null) => v || '-' },
             {
+              title: 'AI 模型',
+              dataIndex: 'model',
+              width: 160,
+              render: (v: string | null) => (v ? <Tag color="purple">{v}</Tag> : <span style={{ color: '#999' }}>默认模型</span>),
+            },
+            {
               title: '任务状态',
               dataIndex: 'status',
               width: 120,
@@ -859,6 +872,21 @@ export default function AiTaskPage() {
             extra={editing ? '编辑任务时不可修改代码分支' : undefined}
           >
             <Input placeholder="如：feature/login-scan" maxLength={100} disabled={viewOnly || creating || !!editing} />
+          </Form.Item>
+          <Form.Item
+            name="model"
+            label="AI 模型"
+            extra="不选择则使用系统默认模型；所选模型将用于该任务的 AICoding 执行。"
+          >
+            <Select
+              allowClear
+              placeholder="默认模型（系统配置）"
+              disabled={viewOnly || creating}
+              options={[
+                { label: '默认模型（系统配置）', value: '' },
+                ...modelList.map((m) => ({ label: m, value: m })),
+              ]}
+            />
           </Form.Item>
           <Form.Item name="status" label="任务状态" rules={[{ required: true, message: '请选择任务状态' }]}>
             <Select options={AI_TASK_STATUS.map((s) => ({ label: s, value: s }))} disabled={viewOnly || creating} />
