@@ -6,7 +6,7 @@ import { createEventRenderer, createLineSplitter, stripAnsi } from './codebuddyS
 const NODE20_BIN = '/Users/howbuy/.nvm/versions/node/v20.20.2/bin';
 
 /** 允许通过配置指定的模型白名单；非法或留空则使用 codebuddy 默认模型 */
-const MODEL_WHITELIST = [
+export const MODEL_WHITELIST = [
   'hy3',
   'glm-5.2',
   'glm-5.1',
@@ -39,7 +39,13 @@ const RUN_TIMEOUT_MS = Number(process.env.CODEBUDDY_RUN_TIMEOUT_MS ?? 1_800_000)
  * 2. prompt 前加 `--` 终止选项解析，保证它一定被当作位置参数。
  * 两道防线互相独立，任一失效都不会重现该 bug。
  */
-export function buildCodebuddyArgs(sessionId: string, prompt: string, repoDir: string): string[] {
+export function buildCodebuddyArgs(
+  sessionId: string,
+  prompt: string,
+  repoDir: string,
+  /** 显式指定的模型；为空/null 则不追加 --model，走 codebuddy 默认模型 */
+  model: string | null = null,
+): string[] {
   const args = [
     '-p',
     '--add-dir',
@@ -53,7 +59,6 @@ export function buildCodebuddyArgs(sessionId: string, prompt: string, repoDir: s
     'bypassPermissions',
     '-y',
   ];
-  const model = resolveModel();
   if (model) args.push('--model', model);
   args.push('--', prompt);
   return args;
@@ -114,9 +119,11 @@ export function runAICoding(
   prompt: string,
   repoDir: string,
   hooks: RunAICodingHooks,
+  /** 显式指定的模型；为空/null 则不追加 --model，走 codebuddy 默认模型 */
+  model: string | null = null,
 ): ChildProcess {
   const bin = config.ai.codebuddyBin;
-  const args = buildCodebuddyArgs(sessionId, prompt, repoDir);
+  const args = buildCodebuddyArgs(sessionId, prompt, repoDir, model);
   const env = {
     ...process.env,
     PATH: `${NODE20_BIN}:${process.env.PATH ?? ''}`,

@@ -6,6 +6,7 @@ import { operLog } from '../../middleware/operLog.js';
 import { ok, page } from '../../utils/response.js';
 import { parsePaging } from '../../utils/request.js';
 import { AI_TASK_STATUS } from '../../models/index.js';
+import { MODEL_WHITELIST } from '../../utils/codebuddy.js';
 import * as service from './aiTask.service.js';
 
 const router = Router();
@@ -15,6 +16,12 @@ const taskSchema = z.object({
   summary: z.string().trim().max(255).nullish(),
   smartDocId: z.union([z.coerce.number().int().positive(), z.null()]).optional(),
   branch: z.string().trim().max(100).nullish(),
+  /** 选用的 AI 模型；留空/null 表示使用系统默认模型 */
+  model: z
+    .string()
+    .max(50)
+    .nullish()
+    .refine((v) => !v || MODEL_WHITELIST.includes(v), { message: '不支持的 AI 模型' }),
   status: z.enum(AI_TASK_STATUS).optional(),
 });
 
@@ -30,6 +37,14 @@ const querySchema = z.object({
 });
 
 const idSchema = z.object({ id: z.coerce.number().int().positive() });
+
+router.get(
+  '/models',
+  requirePerms('orchestration:aiTask:list'),
+  async (_req, res) => {
+    ok(res, service.listAiModels());
+  },
+);
 
 router.get(
   '/',

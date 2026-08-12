@@ -26,6 +26,8 @@ export class AITask extends Model<InferAttributes<AITask>, InferCreationAttribut
   declare smartDocId: number | null;
   /** 代码分支 */
   declare branch: string | null;
+  /** 选用的 AI 模型；为空/null 表示使用系统默认模型 */
+  declare model: string | null;
   /** 任务状态：待开始 / 进行中 / 已结束 */
   declare status: AITaskStatus;
   /** AICoding 状态：暂无 / 编译中 / 编译成功 / 编译失败 */
@@ -46,6 +48,11 @@ AITask.init(
     sessionId: { type: DataTypes.STRING(16), allowNull: false, unique: true, comment: '会话 ID（创建时自动生成）' },
     smartDocId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, comment: '关联智能文档 id' },
     branch: { type: DataTypes.STRING(100), allowNull: true, comment: '代码分支' },
+    model: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      comment: '选用的 AI 模型（null 表示使用系统默认模型）',
+    },
     status: {
       type: DataTypes.ENUM(...AI_TASK_STATUS),
       allowNull: false,

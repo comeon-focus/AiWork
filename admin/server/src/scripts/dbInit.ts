@@ -419,6 +419,20 @@ async function ensureUserInfoMenu() {
   console.log('[db:init] 用户信息菜单已迁移至「系统管理」');
 }
 
+/** 确保 sys_ai_task 已包含 model 字段（模型已声明，此处补齐存量库） */
+async function ensureAiTaskModelColumn() {
+  const qi = sequelize.getQueryInterface();
+  const cols = await qi.describeTable('sys_ai_task');
+  if (!cols.model) {
+    await qi.addColumn('sys_ai_task', 'model', {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      comment: '选用的 AI 模型（null 表示使用系统默认模型）',
+    });
+    console.log('[db:init] 已为 sys_ai_task 新增 model 字段');
+  }
+}
+
 /** 确保 sys_user 已包含 git_key 字段（模型已声明，此处补齐存量库） */
 async function ensureUserGitKeyColumn() {
   const qi = sequelize.getQueryInterface();
@@ -456,6 +470,7 @@ async function main() {
   console.log(force ? '[db:init] 已删除并重建全部数据表' : '[db:init] 数据表已同步');
 
   // 增量补齐：存量库不会走下面的种子分支，这里保证新菜单、字段列与多项目关联一定存在
+  await ensureAiTaskModelColumn();
   await ensureUserGitKeyColumn();
   await ensureUserInfoMenu();
   await ensureDataTaskProjects();

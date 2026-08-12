@@ -151,6 +151,8 @@ export const aiTaskApi = {
     page?: number;
     pageSize?: number;
   }) => http.get<PageResult<AITaskItem>>('/ai-tasks', params),
+  /** 可选 AI 模型列表与系统默认模型 */
+  models: () => http.get<{ models: string[]; defaultModel: string | null }>('/ai-tasks/models'),
   create: (body: AITaskInput) => http.post<AITaskItem>('/ai-tasks', body, { timeout: AI_TASK_CREATE_TIMEOUT }),
   update: (id: number, body: AITaskInput) => http.put<AITaskItem>(`/ai-tasks/${id}`, body),
   updateStatus: (id: number, status: AITaskStatus) =>
