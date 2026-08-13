@@ -651,7 +651,7 @@ export default function AiTaskPage() {
           rowKey="id"
           loading={loading}
           dataSource={data}
-          scroll={{ x: 1600 }}
+          scroll={{ x: 1560 }}
           pagination={{
             current: page,
             pageSize,
@@ -699,7 +699,7 @@ export default function AiTaskPage() {
             { title: '创建时间', dataIndex: 'createdAt', width: 180 },
             {
               title: '操作',
-              width: 280,
+              width: 240,
               fixed: 'right',
               render: (_, record) => (
                 <div style={{ display: 'flex', flexDirection: 'column', rowGap: 4 }}>
