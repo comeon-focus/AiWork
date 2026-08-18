@@ -3,6 +3,11 @@ import type {
   AITaskItem,
   AITaskInput,
   AITaskStatus,
+  OrphanWorkspace,
+  OrphanCleanResult,
+  EndedTaskResource,
+  ReclaimResult,
+  TaskSessionView,
   AiTaskCommitResult,
   AicodingStatus,
   AiSubTaskItem,
@@ -161,7 +166,21 @@ export const aiTaskApi = {
   /** 提交并推送该任务代码库下的全部改动；push 走网络，超时单独放宽 */
   commit: (id: number) =>
     http.post<AiTaskCommitResult>(`/ai-tasks/${id}/commit`, undefined, { timeout: GIT_TIMEOUT }),
-  remove: (id: number) => http.delete<null>(`/ai-tasks/${id}`),
+  /** 删除 AI 任务；force=true 表示已确认丢弃未提交改动（对应后端 NEED_CONFIRM 二次确认） */
+  remove: (id: number, force = false) =>
+    http.delete<null>(`/ai-tasks/${id}`, force ? { force: 1 } : undefined),
+  /** 孤儿工作区列表：AiWorkSpace 下已无对应 AI 任务的目录 */
+  orphanWorkspaces: () => http.get<OrphanWorkspace[]>('/ai-tasks/orphan-workspaces'),
+  /** 清理指定孤儿工作区（仅删真实孤儿，后端二次校验） */
+  cleanOrphanWorkspaces: (sessionIds: string[]) =>
+    http.post<OrphanCleanResult>('/ai-tasks/orphan-workspaces/clean', { sessionIds }),
+  /** 已结束任务资源占用列表 */
+  endedTaskResources: () => http.get<EndedTaskResource[]>('/ai-tasks/ended-resources'),
+  /** 回收「已结束」任务的本地资源（保留 DB 行与历史）；force 丢弃未提交改动 */
+  reclaimEndedTask: (id: number, force = false) =>
+    http.post<ReclaimResult>(`/ai-tasks/${id}/reclaim`, { force }),
+  /** AICoding 会话查看：对话记录 + 最近一次编译改动摘要 */
+  session: (id: number) => http.get<TaskSessionView>(`/ai-tasks/${id}/session`),
 };
 
 export const aiSubTaskApi = {
@@ -173,6 +192,8 @@ export const aiSubTaskApi = {
     http.patch<AiSubTaskItem>(`/ai-sub-tasks/${id}/status`, { status }),
   aicoding: (id: number) => http.post<{ codingStatus: AicodingStatus }>(`/ai-sub-tasks/${id}/aicoding`),
   remove: (id: number) => http.delete<null>(`/ai-sub-tasks/${id}`),
+  /** AICoding 会话查看（与父任务共用同一 sessionId） */
+  session: (id: number) => http.get<TaskSessionView>(`/ai-sub-tasks/${id}/session`),
 };
 
 export const aiCompileLogApi = {

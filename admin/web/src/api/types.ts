@@ -212,6 +212,79 @@ export interface AITaskItem {
   createdAt: string;
 }
 
+/** 孤儿工作区：AiWorkSpace 下已无对应 AI 任务的目录（资源泄漏） */
+export interface OrphanWorkspace {
+  /** 目录名，即曾用过的 sessionId */
+  sessionId: string;
+  /** 绝对路径 */
+  path: string;
+  /** 磁盘占用（字节） */
+  sizeBytes: number;
+}
+
+/** 清理孤儿工作区结果 */
+export interface OrphanCleanResult {
+  removed: string[];
+  freedBytes: number;
+}
+
+/** 已结束任务资源占用 */
+export interface EndedTaskResource {
+  id: number;
+  title: string;
+  sessionId: string;
+  branch: string | null;
+  /** 是否由系统创建、可回收的远程分支 */
+  reclaimableBranch: boolean;
+  /** 本地工作区是否存在 */
+  hasWorkspace: boolean;
+  /** 本地工作区磁盘占用（字节） */
+  workspaceSizeBytes: number;
+  /** codebuddy 会话缓存是否存在 */
+  hasSession: boolean;
+}
+
+/** 回收已结束任务资源结果 */
+export interface ReclaimResult {
+  removedWorkspace: boolean;
+  removedBranch: boolean;
+  removedSession: boolean;
+  freedBytes: number;
+}
+
+/** 单条 AICoding 会话消息 */
+export interface SessionMessage {
+  role: string;
+  text: string;
+  timestamp?: number | null;
+}
+
+/** 会话关联的最近一次编译记录摘要 */
+export interface SessionCompileLog {
+  id: number;
+  status: string;
+  taskType?: string | null;
+  title?: string | null;
+  model?: string | null;
+  changedFiles?: number | null;
+  changedDetail?: string | null;
+  errorMsg?: string | null;
+  commitsAhead?: number | null;
+  durationMs?: number | null;
+  numTurns?: number | null;
+  startedAt?: string;
+  finishedAt?: string | null;
+}
+
+/** AICoding 会话视图：对话记录 + 最近一次编译改动摘要 */
+export interface TaskSessionView {
+  sessionId: string;
+  /** 会话 jsonl 是否存在（工作区被回收后可能已不在） */
+  exists: boolean;
+  messages: SessionMessage[];
+  compileLog: SessionCompileLog | null;
+}
+
 /** 提交代码结果 */
 export interface AiTaskCommitResult {
   /** 本次提交涉及的文件数 */

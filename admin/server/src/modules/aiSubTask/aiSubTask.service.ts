@@ -15,6 +15,7 @@ import {
   assertParentNotInRunningQueue,
   startAicodingRun,
   buildAicodingPrompt,
+  buildSessionView,
   type AicodingActor,
 } from '../aiTask/aiTask.service.js';
 
@@ -164,4 +165,11 @@ export async function aicodingAiSubTask(
     throw ApiError.badRequest(`AICoding 启动失败：${(e as Error).message}`);
   }
   return { codingStatus: '编译中' as AicodingStatus };
+}
+
+/** 子任务 AICoding 会话视图：与父任务共用同一 sessionId，故展示的是同一段会话 */
+export async function getSubTaskSession(subTaskId: number) {
+  const sub = await AiSubTask.findByPk(subTaskId);
+  if (!sub) throw ApiError.notFound('子任务不存在');
+  return buildSessionView(sub.sessionId ?? '', sub.parentId, sub.id);
 }

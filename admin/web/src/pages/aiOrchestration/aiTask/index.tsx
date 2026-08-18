@@ -1,17 +1,28 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, Card, Drawer, Form, Input, Modal, Popconfirm, Select, Space, Steps, Table, Tag, Tooltip, message } from 'antd';
+import { Alert, Button, Card, Drawer, Form, Input, Modal, Popconfirm, Select, Space, Steps, Table, Tabs, Tag, Tooltip, message } from 'antd';
+import type { AxiosError } from 'axios';
 import { PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { aiTaskApi, aiSubTaskApi, smartDocApi } from '@/api';
+import type { ApiBody } from '@/api/request';
 import type {
   AITaskItem,
   AITaskStatus,
   AiSubTaskItem,
   SmartDocItem,
   AicodingStatus,
+  OrphanWorkspace,
+  OrphanCleanResult,
+  EndedTaskResource,
+  ReclaimResult,
 } from '@/api/types';
 import { AI_TASK_STATUS, AI_CODING_STATUS_COLOR } from '@/api/types';
 import { Auth } from '@/components/Auth';
 import { SessionIdTag } from '@/components/SessionIdTag';
+import { SessionViewerModal } from '@/components/SessionViewerModal';
+import type { TaskSessionView } from '@/api/types';
+
+/** 后端「需二次确认」业务码（见 server/src/utils/ApiError.ts NEED_CONFIRM） */
+const NEED_CONFIRM = 40901;
 
 /** AI 任务状态对应 Tag 颜色 */
 const AI_TASK_STATUS_COLOR: Record<AITaskStatus, string> = {
@@ -184,6 +195,18 @@ function SubTaskModal({
     void load();
   };
 
+  /** AICoding 会话查看器（子任务与父任务共用同一 sessionId） */
+  const [subSessionOpen, setSubSessionOpen] = useState(false);
+  const [subSessionTitle, setSubSessionTitle] = useState('AICoding 会话');
+  const [subSessionLoader, setSubSessionLoader] = useState<() => Promise<TaskSessionView>>(
+    () => async () => ({ sessionId: '', exists: false, messages: [], compileLog: null }),
+  );
+  const openSubSession = (id: number, title: string) => {
+    setSubSessionLoader(() => () => aiSubTaskApi.session(id));
+    setSubSessionTitle(`AICoding 会话 · ${title}`);
+    setSubSessionOpen(true);
+  };
+
   const startSubAicoding = async (id: number) => {
     await aiSubTaskApi.aicoding(id);
     message.success('AICoding 已启动，正在根据智能文档修改代码');
@@ -281,6 +304,11 @@ function SubTaskModal({
             width: 220,
             render: (_, record) => (
               <Space size={4}>
+                <Auth perms="orchestration:aiTask:list">
+                  <Button type="link" size="small" onClick={() => openSubSession(record.id, record.title)}>
+                    对话
+                  </Button>
+                </Auth>
                 <Auth perms="orchestration:aiTask:edit">
                   <Button
                     type="link"
@@ -388,6 +416,13 @@ function SubTaskModal({
           状态改为「已结束」后子任务将锁定，不可再修改。
         </div>
       </Modal>
+
+      <SessionViewerModal
+        open={subSessionOpen}
+        title={subSessionTitle}
+        load={subSessionLoader}
+        onClose={() => setSubSessionOpen(false)}
+      />
     </>
   );
 }
@@ -419,6 +454,28 @@ export default function AiTaskPage() {
   const [createError, setCreateError] = useState<string | null>(null);
   /** 正在提交代码的任务 id */
   const [committingId, setCommittingId] = useState<number | null>(null);
+  /** 资源回收弹窗：孤儿工作区检测与清理 */
+  const [reclaimOpen, setReclaimOpen] = useState(false);
+  const [orphans, setOrphans] = useState<OrphanWorkspace[]>([]);
+  const [reclaimLoading, setReclaimLoading] = useState(false);
+  const [reclaimSelected, setReclaimSelected] = useState<string[]>([]);
+  /** 已结束任务资源占用列表 */
+  const [endedList, setEndedList] = useState<EndedTaskResource[]>([]);
+  const [endedLoading, setEndedLoading] = useState(false);
+  /** AICoding 会话查看器 */
+  const [sessionOpen, setSessionOpen] = useState(false);
+  const [sessionTitle, setSessionTitle] = useState('AICoding 会话');
+  const [sessionLoader, setSessionLoader] = useState<() => Promise<TaskSessionView>>(
+    () => async () => ({ sessionId: '', exists: false, messages: [], compileLog: null }),
+  );
+
+  /** 字节数转人类可读 */
+  const formatBytes = (bytes: number): string => {
+    if (!bytes) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+    return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  };
 
   const load = useCallback(
     async (next?: { page?: number; pageSize?: number }, opts?: { silent?: boolean }) => {
@@ -543,10 +600,27 @@ export default function AiTaskPage() {
     void load();
   };
 
-  const remove = async (id: number) => {
-    await aiTaskApi.remove(id);
-    message.success('删除成功');
-    void load();
+  const remove = async (id: number, force = false) => {
+    try {
+      await aiTaskApi.remove(id, force);
+      message.success('删除成功');
+      void load();
+    } catch (e) {
+      // 代码库有未提交改动：后端返回 NEED_CONFIRM，这里弹确认框，确认则强制删除，取消则中止
+      const body = (e as AxiosError<ApiBody>)?.response?.data;
+      if (body?.code === NEED_CONFIRM) {
+        Modal.confirm({
+          title: '存在未提交的代码',
+          content: body.msg || '该任务代码库存在未提交的修改，删除将丢弃这些改动。',
+          okText: '确认删除（丢弃改动）',
+          okType: 'danger',
+          cancelText: '取消',
+          onOk: () => void remove(id, true),
+        });
+        return;
+      }
+      // 其它错误已由请求拦截器统一提示，无需重复
+    }
   };
 
   const startAicoding = async (id: number) => {
@@ -570,6 +644,77 @@ export default function AiTaskPage() {
   const openSubModal = (record: AITaskItem) => {
     setSubParent(record);
     setSubOpen(true);
+  };
+
+  /** 打开资源回收弹窗并加载孤儿工作区列表 */
+  const openReclaim = async () => {
+    setReclaimOpen(true);
+    setReclaimLoading(true);
+    setReclaimSelected([]);
+    setEndedLoading(true);
+    try {
+      setOrphans(await aiTaskApi.orphanWorkspaces());
+    } catch {
+      setOrphans([]);
+    } finally {
+      setReclaimLoading(false);
+    }
+    try {
+      setEndedList(await aiTaskApi.endedTaskResources());
+    } catch {
+      setEndedList([]);
+    } finally {
+      setEndedLoading(false);
+    }
+  };
+
+  /** 清理选中的孤儿工作区（后端会二次校验，绝不误删有关联任务的目录） */
+  const cleanSelected = async () => {
+    if (!reclaimSelected.length) return;
+    setReclaimLoading(true);
+    try {
+      const r: OrphanCleanResult = await aiTaskApi.cleanOrphanWorkspaces(reclaimSelected);
+      message.success(`已清理 ${r.removed.length} 个孤儿工作区，释放 ${formatBytes(r.freedBytes)}`);
+      const remain = orphans.filter((o) => !r.removed.includes(o.sessionId));
+      setOrphans(remain);
+      setReclaimSelected([]);
+    } finally {
+      setReclaimLoading(false);
+    }
+  };
+
+  /** 回收「已结束」任务的本地资源（保留 DB 记录与历史）；
+   *  若有未提交改动，后端返回 NEED_CONFIRM，弹确认框确认则强制回收 */
+  const reclaim = async (record: EndedTaskResource, force = false) => {
+    try {
+      const r: ReclaimResult = await aiTaskApi.reclaimEndedTask(record.id, force);
+      const parts: string[] = [];
+      if (r.removedWorkspace) parts.push(`本地仓库 ${formatBytes(r.freedBytes)}`);
+      if (r.removedBranch) parts.push('远程分支');
+      if (r.removedSession) parts.push('会话缓存');
+      message.success(`已回收：${parts.join('、') || '无'}`);
+      setEndedList((list) => list.filter((t) => t.id !== record.id));
+    } catch (e) {
+      const body = (e as AxiosError<ApiBody>)?.response?.data;
+      if (body?.code === NEED_CONFIRM) {
+        Modal.confirm({
+          title: '存在未提交的代码',
+          content: body.msg || '该任务代码库存在未提交的修改，回收将丢弃这些改动。',
+          okText: '确认回收（丢弃改动）',
+          okType: 'danger',
+          cancelText: '取消',
+          onOk: () => void reclaim(record, true),
+        });
+        return;
+      }
+    }
+  };
+
+  /** 打开 AICoding 会话查看器（父任务） */
+  const openSession = (id: number, title: string) => {
+    setSessionLoader(() => () => aiTaskApi.session(id));
+    setSessionTitle(`AICoding 会话 · ${title}`);
+    setSessionOpen(true);
   };
 
   return (
@@ -640,11 +785,18 @@ export default function AiTaskPage() {
         className="page-card"
         title="AI任务列表"
         extra={
-          <Auth perms="orchestration:aiTask:add">
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal()}>
-              新增任务
-            </Button>
-          </Auth>
+          <Space>
+            <Auth perms="orchestration:aiTask:remove">
+              <Button icon={<ReloadOutlined />} onClick={openReclaim}>
+                资源回收
+              </Button>
+            </Auth>
+            <Auth perms="orchestration:aiTask:add">
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal()}>
+                新增任务
+              </Button>
+            </Auth>
+          </Space>
         }
       >
         <Table<AITaskItem>
@@ -707,6 +859,11 @@ export default function AiTaskPage() {
                     <Auth perms="orchestration:aiTask:list">
                       <Button type="link" size="small" onClick={() => openSubModal(record)}>
                         子任务
+                      </Button>
+                    </Auth>
+                    <Auth perms="orchestration:aiTask:list">
+                      <Button type="link" size="small" onClick={() => openSession(record.id, record.title)}>
+                        对话
                       </Button>
                     </Auth>
                     <Auth perms="orchestration:aiTask:edit">
@@ -914,6 +1071,126 @@ export default function AiTaskPage() {
           状态改为「已结束」后任务将锁定，编辑按钮变为查看，且不可再修改。
         </div>
       </Modal>
+
+      <Modal
+        open={reclaimOpen}
+        title="资源回收"
+        width={820}
+        onCancel={() => setReclaimOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setReclaimOpen(false)}>
+            关闭
+          </Button>,
+        ]}
+        destroyOnHidden
+      >
+        <Tabs
+          defaultActiveKey="orphan"
+          items={[
+            {
+              key: 'orphan',
+              label: `孤儿工作区（${orphans.length}）`,
+              children: (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="以下目录位于 AiWorkSpace 下，但数据库中已无对应 AI 任务（任务被删库未清目录或创建中途残留）。清理仅删除真实孤儿，绝不误删仍有关联任务的目录。"
+                  />
+                  <Table<OrphanWorkspace>
+                    rowKey="sessionId"
+                    size="small"
+                    loading={reclaimLoading}
+                    dataSource={orphans}
+                    rowSelection={{ selectedRowKeys: reclaimSelected, onChange: (keys) => setReclaimSelected(keys as string[]) }}
+                    pagination={false}
+                    locale={{ emptyText: '暂无孤儿工作区，磁盘占用健康' }}
+                    columns={[
+                      { title: 'Session ID', dataIndex: 'sessionId', width: 200 },
+                      { title: '磁盘占用', dataIndex: 'sizeBytes', width: 140, render: (v: number) => formatBytes(v) },
+                      { title: '路径', dataIndex: 'path', ellipsis: true },
+                    ]}
+                  />
+                  {orphans.length > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>
+                      共 {orphans.length} 个孤儿工作区，合计 {formatBytes(orphans.reduce((s, o) => s + o.sizeBytes, 0))}。
+                    </div>
+                  )}
+                  <Button
+                    type="primary"
+                    danger
+                    style={{ marginTop: 12 }}
+                    disabled={!reclaimSelected.length || reclaimLoading}
+                    loading={reclaimLoading}
+                    onClick={cleanSelected}
+                  >
+                    清理选中（{reclaimSelected.length}）
+                  </Button>
+                </>
+              ),
+            },
+            {
+              key: 'ended',
+              label: `已结束任务（${endedList.length}）`,
+              children: (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="已结束任务默认仅改状态、保留本地仓库与会话缓存。以下任务仍持有可回收资源，回收仅删除本地产物（本地仓库 / 远程分支 / 会话缓存），任务记录与编译、提交历史均保留。"
+                  />
+                  <Table<EndedTaskResource>
+                    rowKey="id"
+                    size="small"
+                    loading={endedLoading}
+                    dataSource={endedList}
+                    pagination={false}
+                    locale={{ emptyText: '暂无已结束任务持有可回收资源' }}
+                    columns={[
+                      { title: '任务', dataIndex: 'title', width: 180, ellipsis: true },
+                      { title: 'Session ID', dataIndex: 'sessionId', width: 160 },
+                      {
+                        title: '本地仓库',
+                        width: 110,
+                        render: (_, r) => (r.hasWorkspace ? <Tag color="warning">{formatBytes(r.workspaceSizeBytes)}</Tag> : <span style={{ color: '#999' }}>无</span>),
+                      },
+                      {
+                        title: '远程分支',
+                        width: 110,
+                        render: (_, r) =>
+                          r.reclaimableBranch ? <Tag color="volcano">{r.branch}</Tag> : <span style={{ color: '#999' }}>无</span>,
+                      },
+                      {
+                        title: '会话缓存',
+                        width: 90,
+                        render: (_, r) => (r.hasSession ? <Tag color="gold">有</Tag> : <span style={{ color: '#999' }}>无</span>),
+                      },
+                      {
+                        title: '操作',
+                        width: 80,
+                        render: (_, r) => (
+                          <Button type="link" size="small" danger onClick={() => reclaim(r)}>
+                            回收
+                          </Button>
+                        ),
+                      },
+                    ]}
+                  />
+                </>
+              ),
+            },
+          ]}
+        />
+      </Modal>
+
+      <SessionViewerModal
+        open={sessionOpen}
+        title={sessionTitle}
+        load={sessionLoader}
+        onClose={() => setSessionOpen(false)}
+      />
     </>
   );
 }

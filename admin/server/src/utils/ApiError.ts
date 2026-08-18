@@ -7,6 +7,8 @@ export const ErrorCode = {
   FORBIDDEN: 40300,
   NOT_FOUND: 40400,
   CONFLICT: 40900,
+  /** 操作需要用户二次确认（如删除含未提交代码的任务），前端据此弹确认框而非错误提示 */
+  NEED_CONFIRM: 40901,
   INTERNAL: 50000,
 } as const;
 
@@ -38,5 +40,8 @@ export class ApiError extends Error {
   }
   static conflict(msg = '数据冲突') {
     return new ApiError(ErrorCode.CONFLICT, msg, 409);
+  }
+  static needConfirm(msg = '该操作需要二次确认') {
+    return new ApiError(ErrorCode.NEED_CONFIRM, msg, 409);
   }
 }

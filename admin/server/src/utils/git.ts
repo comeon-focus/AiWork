@@ -291,12 +291,35 @@ export async function removeWorkspaceDir(sessionId: string): Promise<void> {
 }
 
 /**
+ * 删除任务创建时推送到远端的分支（回收无主远程分支，避免越积越多）。
+ * 必须在本地工作区仍存在的条件下调用——删除任务时会先于 removeWorkspaceDir 执行。
+ * 走参数数组（非 shell），分支名若含特殊字符也安全。
+ * 分支可能已被手动保留/改名或远端已不存在，失败只告警不阻断主流程。
+ */
+export async function deleteRemoteBranch(
+  repoDir: string,
+  branch: string,
+  timeoutMs = 120000,
+): Promise<boolean> {
+  // 目录本身必须是 git 仓库（含 .git），否则 git 会向上找到 enclosing 仓库并向其 origin 推送，
+  // 误删无关仓库的分支。非本任务克隆出的目录直接跳过，避免危险操作。
+  if (!fs.existsSync(path.join(repoDir, '.git'))) return false;
+  try {
+    await gitExec(repoDir, ['push', 'origin', '--delete', branch], timeoutMs);
+    return true;
+  } catch (e) {
+    console.warn(`[git] 删除远程分支『${branch}』失败（可能远端已不存在或无权删除）：${gitErrMsg(e)}`);
+    return false;
+  }
+}
+
+/**
  * codebuddy 的配置根目录，与 CLI 内部 PathUtils.getHomeDir() 等价：
  * 优先 CODEBUDDY_CONFIG_DIR，否则 ~/.codebuddy。
  * spawn 子进程时透传了整个 process.env，因此这里读到的与子进程实际使用的必然一致，
  * 换机器 / 换部署路径都不需要改代码。
  */
-function codebuddyHomeDir(): string {
+export function codebuddyHomeDir(): string {
   const custom = process.env.CODEBUDDY_CONFIG_DIR?.trim();
   return custom || path.join(os.homedir(), '.codebuddy');
 }
@@ -352,4 +375,22 @@ export async function clearCodebuddySession(sessionId: string): Promise<void> {
       if (f.startsWith(`${sessionId}__`)) await rm(path.join(dayDir, f));
     }
   }
+}
+
+/**
+ * 定位某 sessionId 对应的 codebuddy 会话 jsonl 文件。
+ * 会话记录实际落在 <home>/projects/<compressPath(工作目录)>/<sessionId>.jsonl>，
+ * 目录名以 `-<sessionId>` 结尾（工作目录以 sessionId 命名），据此扫描即可命中。
+ * 不依赖工作区是否存在（工作区被回收后会话记录仍在），找不到返回 null。
+ */
+export async function findCodebuddySessionFile(sessionId: string): Promise<string | null> {
+  const projectsDir = path.join(codebuddyHomeDir(), 'projects');
+  const entries = await fs.promises.readdir(projectsDir).catch(() => [] as string[]);
+  for (const name of entries) {
+    if (name === sessionId || name.endsWith(`-${sessionId}`)) {
+      const f = path.join(projectsDir, name, `${sessionId}.jsonl`);
+      if (fs.existsSync(f)) return f;
+    }
+  }
+  return null;
 }

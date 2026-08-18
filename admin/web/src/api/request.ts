@@ -18,6 +18,8 @@ export interface PageResult<T> {
 /** access token 过期，需要静默刷新 */
 const TOKEN_EXPIRED = 40101;
 const UNAUTHORIZED = 40100;
+/** 操作需要用户二次确认（如删除含未提交代码的任务）：不弹错误提示，交由调用方弹确认框 */
+const NEED_CONFIRM = 40901;
 
 const instance = axios.create({ baseURL: '/api', timeout: 15000 });
 
@@ -94,6 +96,11 @@ instance.interceptors.response.use(
     if (body?.code === UNAUTHORIZED) {
       message.error(body.msg || '请重新登录');
       redirectToLogin();
+      return Promise.reject(error);
+    }
+
+    // 需要二次确认的错误：不弹错误提示，交给具体组件弹确认框处理
+    if (body?.code === NEED_CONFIRM) {
       return Promise.reject(error);
     }
 

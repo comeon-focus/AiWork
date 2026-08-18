@@ -26,6 +26,8 @@ export class AITask extends Model<InferAttributes<AITask>, InferCreationAttribut
   declare smartDocId: number | null;
   /** 代码分支 */
   declare branch: string | null;
+  /** 任务创建时是否由系统新建并推送了该分支（删除任务时一并回收远程分支） */
+  declare branchCreated: boolean | null;
   /** 选用的 AI 模型；为空/null 表示使用系统默认模型 */
   declare model: string | null;
   /** 任务状态：待开始 / 进行中 / 已结束 */
@@ -48,6 +50,12 @@ AITask.init(
     sessionId: { type: DataTypes.STRING(16), allowNull: false, unique: true, comment: '会话 ID（创建时自动生成）' },
     smartDocId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, comment: '关联智能文档 id' },
     branch: { type: DataTypes.STRING(100), allowNull: true, comment: '代码分支' },
+    branchCreated: {
+      type: DataTypes.BOOLEAN,
+      allowNull: true,
+      defaultValue: false,
+      comment: '任务创建时是否由系统新建并推送了该分支（删除任务时一并回收远程分支）',
+    },
     model: {
       type: DataTypes.STRING(50),
       allowNull: true,

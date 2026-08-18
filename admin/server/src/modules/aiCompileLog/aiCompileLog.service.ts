@@ -224,6 +224,17 @@ export async function getCompileLog(id: number) {
   return log;
 }
 
+/** 取某会话（任务/子任务）最近一条编译记录，用于会话查看器的「改动明细」摘要（排除大字段） */
+export async function latestCompileLog(filter: { sessionId: string; taskId: number; subTaskId?: number | null }) {
+  const where: Record<string, unknown> = { sessionId: filter.sessionId, taskId: filter.taskId };
+  if (filter.subTaskId !== undefined) where.subTaskId = filter.subTaskId;
+  return AiCompileLog.findOne({
+    where,
+    order: [['id', 'DESC']],
+    attributes: { exclude: LIST_EXCLUDE },
+  });
+}
+
 interface TailRow {
   status: AiCompileStatus;
   truncated: number;

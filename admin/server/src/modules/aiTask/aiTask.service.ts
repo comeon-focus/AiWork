@@ -1,8 +1,11 @@
 import { Op } from 'sequelize';
 import fs from 'fs';
+import path from 'path';
 import {
   AITask,
   AiSubTask,
+  AiCompileLog,
+  AiGitCommit,
   SmartDoc,
   CodeRepo,
   TaskQueue,
@@ -19,14 +22,18 @@ import {
   checkoutBranch,
   createAndPushBranch,
   isBranchNotFound,
+  AI_WORKSPACE_DIR,
   taskWorkspaceDir,
   hasUncommittedChanges,
   removeWorkspaceDir,
   clearCodebuddySession,
+  codebuddyHomeDir,
   snapshotRepo,
   diffRepoSince,
   commitAllAndPush,
   GitAfterCommitError,
+  deleteRemoteBranch,
+  findCodebuddySessionFile,
   type CommitResult,
 } from '../../utils/git.js';
 import { runAICoding, resolveModel, MODEL_WHITELIST } from '../../utils/codebuddy.js';
@@ -34,6 +41,7 @@ import {
   startCompileLog,
   appendCompileLine,
   finishCompileLog,
+  latestCompileLog,
 } from '../aiCompileLog/aiCompileLog.service.js';
 import {
   recordGitCommit,
@@ -133,6 +141,9 @@ export async function createAiTask(input: AITaskInput) {
   // 都必须把已下载的目录删掉，避免无主目录堆积占用磁盘。
   // 子任务与父任务共用一套代码库，无需单独处理。
   let clonedDir: string | null = null;
+  // 任务创建时是否由系统新建并推送了分支：删除任务时据此决定是否回收远程分支，
+  // 避免误删用户原本就存在、只是被任务复用的分支（如 main/develop）。
+  let branchCreated = false;
   if (repoUrl) {
     const target = taskWorkspaceDir(sessionId);
     try {
@@ -145,6 +156,7 @@ export async function createAiTask(input: AITaskInput) {
           if (isBranchNotFound(msg)) {
             // 分支不存在：基于当前 HEAD 创建本地分支并推送远端（创建远程分支）
             await createAndPushBranch(clonedDir, input.branch);
+            branchCreated = true;
           } else {
             throw ApiError.badRequest(`代码分支切换失败『${input.branch}』，AI 任务创建中止：${msg}`);
           }
@@ -166,6 +178,7 @@ export async function createAiTask(input: AITaskInput) {
       sessionId,
       smartDocId: input.smartDocId ?? null,
       branch: input.branch?.trim() || null,
+      branchCreated,
       model: input.model?.trim() || null,
       status: input.status ?? '待开始',
       codingStatus: '暂无',
@@ -207,35 +220,340 @@ export async function updateAiTaskStatus(id: number, status: AITaskStatus) {
     throw ApiError.badRequest('该任务正在 AICoding 中，无法修改状态');
   }
 
-  // 结束任务前：若代码库有未提交改动，则禁止结束
+  // 结束任务前：若代码库有未提交改动，则禁止结束（避免丢失 AICoding 产生的修改）
   if (status === '已结束') {
     const sid = task.sessionId;
     if (fs.existsSync(taskWorkspaceDir(sid)) && (await hasUncommittedChanges(sid))) {
-      throw ApiError.badRequest('该任务代码库存在未提交的修改，无法结束任务（请先提交或处理改动）');
+      throw ApiError.badRequest('该任务代码库存在未提交的修改，无法结束任务（请先提交代码或处理改动）');
     }
+    // 结束任务仅修改状态：保留本地代码仓库、会话缓存与远程分支，便于事后回看与提交
     await task.update({ status });
-    // 释放 codebuddy 会话缓存并删除本地代码文件夹，回收资源
-    if (fs.existsSync(taskWorkspaceDir(sid))) {
-      await clearCodebuddySession(sid);
-      await removeWorkspaceDir(sid);
-    }
   } else {
     await task.update({ status });
   }
   return task;
 }
 
-export async function removeAiTask(id: number) {
+export async function removeAiTask(id: number, opts?: { force?: boolean }) {
   const task = await AITask.findByPk(id);
   if (!task) throw ApiError.notFound('AI任务不存在');
   if (await isTaskLocked(task.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法删除');
-  // 释放当前会话的 codebuddy 缓存以回收内存，并删除该任务本地代码文件夹（含其中所有文件）
+  // 代码库有未提交改动时：默认拦截并提示需二次确认（前端弹确认框）；
+  // 仅当用户在确认框中「强制删除」(force) 时才放行，丢弃工作区改动。
   const sid = task.sessionId;
-  if (fs.existsSync(taskWorkspaceDir(sid))) {
+  const dir = taskWorkspaceDir(sid);
+  if (fs.existsSync(dir) && (await hasUncommittedChanges(sid)) && !opts?.force) {
+    throw ApiError.needConfirm('该任务代码库存在未提交的修改，删除将丢弃这些改动，确认继续？');
+  }
+  // 释放当前会话的 codebuddy 缓存以回收内存，并删除该任务本地代码文件夹（含其中所有文件）
+  if (fs.existsSync(dir)) {
     await clearCodebuddySession(sid);
+    // 仅回收「由本任务创建」的远程分支：复用已有分支（如 main）的任务删除时不误删，避免丢代码
+    if (task.branchCreated && task.branch) await deleteRemoteBranch(dir, task.branch);
     await removeWorkspaceDir(sid);
   }
+  // 先删子任务及其编译日志 / 提交记录，避免 sys_ai_sub_task_ibfk_1
+  // （parent_id → sys_ai_task.id，无 ON DELETE CASCADE）外键约束导致父任务删除失败。
+  // 这些子表本身没有指回父任务的级联删除，必须显式清理，否则会留下孤儿数据。
+  await AiSubTask.destroy({ where: { parentId: id } });
+  await AiCompileLog.destroy({ where: { taskId: id } });
+  await AiGitCommit.destroy({ where: { taskId: id } });
   await task.destroy();
+}
+
+/* ── 孤儿工作区检测与回收 ─────────────────────────── */
+
+/** 孤儿工作区：AiWorkSpace 下存在、但数据库里已无对应 AI 任务的目录
+ *  （任务被删库未清目录、或创建中途崩溃残留）。父/子任务共用同一 sessionId 目录，
+ *  只要 AITask 中还存在该 sessionId 即不算孤儿。 */
+export interface OrphanWorkspace {
+  sessionId: string;
+  path: string;
+  sizeBytes: number;
+}
+
+/** 递归统计目录磁盘占用（符号链接不深入，避免循环） */
+async function dirSize(dir: string): Promise<number> {
+  let total = 0;
+  const stack = [dir];
+  while (stack.length) {
+    const cur = stack.pop() as string;
+    let entries;
+    try {
+      entries = await fs.promises.readdir(cur, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const p = path.join(cur, e.name);
+      try {
+        if (e.isDirectory()) stack.push(p);
+        else if (e.isSymbolicLink()) total += (await fs.promises.stat(p)).size;
+        else if (e.isFile()) total += (await fs.promises.stat(p)).size;
+      } catch {
+        /* 权限/竞态忽略 */
+      }
+    }
+  }
+  return total;
+}
+
+/** 列出 AiWorkSpace 下所有孤儿目录及其占用 */
+export async function listOrphanWorkspaces(): Promise<OrphanWorkspace[]> {
+  await fs.promises.mkdir(AI_WORKSPACE_DIR, { recursive: true });
+  let entries;
+  try {
+    entries = await fs.promises.readdir(AI_WORKSPACE_DIR, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const names = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  if (!names.length) return [];
+
+  // 一次性查出仍存在的 sessionId，避免逐目录查库（sessionId 唯一）
+  const existing = new Set(
+    (
+      await AITask.findAll({
+        where: { sessionId: { [Op.in]: names } },
+        attributes: ['sessionId'],
+        raw: true,
+      })
+    ).map((t) => (t as { sessionId: string }).sessionId),
+  );
+
+  const orphans: OrphanWorkspace[] = [];
+  for (const name of names) {
+    if (existing.has(name)) continue; // 仍有关联任务，不是孤儿
+    const dir = taskWorkspaceDir(name);
+    const sizeBytes = await dirSize(dir).catch(() => 0);
+    orphans.push({ sessionId: name, path: dir, sizeBytes });
+  }
+  return orphans.sort((a, b) => b.sizeBytes - a.sizeBytes);
+}
+
+/** 清理指定孤儿工作区：仅删真实孤儿，二次校验仍有关联任务则跳过，绝不误删。
+ *  同时回收对应的 codebuddy 会话缓存，释放磁盘。 */
+export async function cleanOrphanWorkspaces(
+  sessionIds: string[],
+): Promise<{ removed: string[]; freedBytes: number }> {
+  if (!sessionIds.length) return { removed: [], freedBytes: 0 };
+  // 二次校验：绝不清理仍关联着 AI 任务的目录
+  const existing = new Set(
+    (
+      await AITask.findAll({
+        where: { sessionId: { [Op.in]: sessionIds } },
+        attributes: ['sessionId'],
+        raw: true,
+      })
+    ).map((t) => (t as { sessionId: string }).sessionId),
+  );
+
+  const removed: string[] = [];
+  let freedBytes = 0;
+  for (const sid of sessionIds) {
+    if (existing.has(sid)) continue; // 有关联任务，跳过
+    const dir = taskWorkspaceDir(sid);
+    if (!fs.existsSync(dir)) continue;
+    freedBytes += await dirSize(dir).catch(() => 0);
+    await clearCodebuddySession(sid); // 一并回收 codebuddy 会话缓存
+    await removeWorkspaceDir(sid);
+    removed.push(sid);
+  }
+  return { removed, freedBytes };
+}
+
+/* ── 已结束任务资源回收 ─────────────────────────── */
+
+/**
+ * 已结束任务资源占用：任务已结束（仅改状态，本地仓库/会话/分支都保留），
+ * 但重资源仍可回收。回收只删本地产物，保留 AITask 行与编译日志/提交记录等历史。
+ */
+export interface EndedTaskResource {
+  id: number;
+  title: string;
+  sessionId: string;
+  branch: string | null;
+  /** 是否由系统创建、可回收的远程分支（删除任务时同款逻辑） */
+  reclaimableBranch: boolean;
+  /** 本地工作区目录是否存在 */
+  hasWorkspace: boolean;
+  /** 本地工作区磁盘占用（字节） */
+  workspaceSizeBytes: number;
+  /** codebuddy 会话缓存是否存在 */
+  hasSession: boolean;
+}
+
+/** 列出「已结束」且仍持有可回收资源的任务 */
+export async function listEndedTaskResources(): Promise<EndedTaskResource[]> {
+  // 一次性读取 codebuddy projects 目录，判断各任务会话缓存是否存在（避免逐任务扫盘）
+  const projectsDir = path.join(codebuddyHomeDir(), 'projects');
+  const projEntries = await fs.promises.readdir(projectsDir).catch(() => [] as string[]);
+  const hasSession = (sid: string) => projEntries.some((n) => n === sid || n.endsWith(`-${sid}`));
+
+  const tasks = (await AITask.findAll({
+    where: { status: '已结束' },
+    attributes: ['id', 'title', 'sessionId', 'branch', 'branchCreated'],
+    order: [['id', 'DESC']],
+    raw: true,
+  })) as unknown as Array<{ id: number; title: string; sessionId: string; branch: string | null; branchCreated: boolean | null }>;
+
+  const result: EndedTaskResource[] = [];
+  for (const t of tasks) {
+    const dir = taskWorkspaceDir(t.sessionId);
+    const ws = fs.existsSync(dir);
+    const size = ws ? await dirSize(dir).catch(() => 0) : 0;
+    const reclaimableBranch = !!t.branchCreated && !!t.branch;
+    // 仅列出确实仍持有可回收资源的任务
+    if (!ws && !reclaimableBranch && !hasSession(t.sessionId)) continue;
+    result.push({
+      id: t.id,
+      title: t.title,
+      sessionId: t.sessionId,
+      branch: t.branch,
+      reclaimableBranch,
+      hasWorkspace: ws,
+      workspaceSizeBytes: size,
+      hasSession: hasSession(t.sessionId),
+    });
+  }
+  return result;
+}
+
+export interface ReclaimResult {
+  removedWorkspace: boolean;
+  removedBranch: boolean;
+  removedSession: boolean;
+  freedBytes: number;
+}
+
+/**
+ * 回收「已结束」任务的本地资源：删本地工作区 + codebuddy 会话缓存，
+ * 若分支由系统创建则一并删远程分支。保留 DB 行与历史。
+ * 仅「已结束」任务可走此路径；未提交改动需二次确认（force）后才丢弃。
+ */
+export async function reclaimEndedTaskResources(id: number, opts?: { force?: boolean }): Promise<ReclaimResult> {
+  const task = await AITask.findByPk(id);
+  if (!task) throw ApiError.notFound('AI任务不存在');
+  if (task.status !== '已结束') throw ApiError.badRequest('仅「已结束」任务可回收本地资源');
+  if (await isTaskLocked(task.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法回收');
+
+  const sid = task.sessionId;
+  const dir = taskWorkspaceDir(sid);
+  const ws = fs.existsSync(dir);
+  // 工作区有未提交改动：默认需二次确认，force 才放行（与删除任务一致）
+  if (ws && (await hasUncommittedChanges(sid)) && !opts?.force) {
+    throw ApiError.needConfirm('该任务代码库存在未提交的修改，回收将丢弃这些改动，确认继续？');
+  }
+
+  // 工作区不在时无法推送删除远程分支（需本地仓库），远程分支回收依赖工作区存在
+  let removedBranch = false;
+  let freedBytes = 0;
+  if (ws) {
+    freedBytes = await dirSize(dir).catch(() => 0);
+    await clearCodebuddySession(sid);
+    if (task.branchCreated && task.branch) removedBranch = await deleteRemoteBranch(dir, task.branch);
+    await removeWorkspaceDir(sid);
+    return { removedWorkspace: true, removedBranch, removedSession: true, freedBytes };
+  }
+
+  // 工作区已不在：仍尝试清理可能残留的 codebuddy 会话缓存
+  await clearCodebuddySession(sid);
+  return { removedWorkspace: false, removedBranch: false, removedSession: true, freedBytes: 0 };
+}
+
+/* ── 会话查看器 ─────────────────────────── */
+
+/** 单条会话消息（角色 + 文本） */
+export interface SessionMessage {
+  role: string;
+  text: string;
+  timestamp?: number | null;
+}
+
+/** 某任务的 AICoding 会话视图：对话记录（来自 codebuddy jsonl）+ 最近一次编译的改动摘要 */
+export interface TaskSessionView {
+  sessionId: string;
+  /** 会话 jsonl 是否存在（工作区被回收后可能已不在） */
+  exists: boolean;
+  messages: SessionMessage[];
+  /** 最近一条编译记录摘要（含改动明细），可能为空 */
+  compileLog: Record<string, unknown> | null;
+}
+
+/** 单条消息文本上限与总条数上限，避免超大会话撑爆响应 */
+const MAX_SESSION_TEXT = 8000;
+const MAX_SESSION_MESSAGES = 500;
+
+/** 从 content 数组/字符串中抽取可读文本；工具调用折叠成 `[工具调用: name] ...` */
+function extractMessageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((p) => {
+        if (typeof p === 'string') return p;
+        const o = p as { text?: string; type?: string; name?: string; input?: unknown };
+        if (typeof o?.text === 'string') return o.text;
+        if (o?.type === 'function_call' || o?.type === 'tool_use') {
+          const name = o.name ?? 'tool';
+          const input = typeof o.input === 'string' ? o.input : JSON.stringify(o.input ?? '');
+          return `[工具调用: ${name}] ${input.slice(0, 500)}`;
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (content && typeof content === 'object') {
+    const o = content as { text?: string };
+    if (typeof o?.text === 'string') return o.text;
+  }
+  return '';
+}
+
+/** 读取并解析 codebuddy 会话 jsonl（每行一条 JSON 消息） */
+async function readSessionMessages(file: string): Promise<SessionMessage[]> {
+  const raw = await fs.promises.readFile(file, 'utf8').catch(() => '');
+  const out: SessionMessage[] = [];
+  for (const line of raw.split('\n')) {
+    const l = line.trim();
+    if (!l) continue;
+    let obj: Record<string, unknown>;
+    try {
+      obj = JSON.parse(l);
+    } catch {
+      continue;
+    }
+    const role = (obj.role as string) ?? '';
+    const text = extractMessageText(obj.content).slice(0, MAX_SESSION_TEXT);
+    if (!role && !text) continue;
+    out.push({ role, text, timestamp: (obj.timestamp as number) ?? null });
+  }
+  // 只保留末尾 MAX_SESSION_MESSAGES 条，避免超长会话撑爆响应
+  return out.length > MAX_SESSION_MESSAGES ? out.slice(out.length - MAX_SESSION_MESSAGES) : out;
+}
+
+/** 按 sessionId + 任务（及可选子任务）拼装会话视图，父子任务共用同一 sessionId */
+export async function buildSessionView(
+  sessionId: string,
+  taskId: number,
+  subTaskId: number | null,
+): Promise<TaskSessionView> {
+  const file = await findCodebuddySessionFile(sessionId);
+  const messages = file ? await readSessionMessages(file) : [];
+  const log = await latestCompileLog({ sessionId, taskId, subTaskId: subTaskId ?? null });
+  return {
+    sessionId,
+    exists: !!file,
+    messages,
+    compileLog: log ? (log.get({ plain: true }) as Record<string, unknown>) : null,
+  };
+}
+
+/** 父任务 AICoding 会话视图（父子共享同一 sessionId） */
+export async function getTaskSession(taskId: number): Promise<TaskSessionView> {
+  const task = await AITask.findByPk(taskId);
+  if (!task) throw ApiError.notFound('AI任务不存在');
+  return buildSessionView(task.sessionId, task.id, null);
 }
 
 /* ── 提交代码 ─────────────────────────── */
