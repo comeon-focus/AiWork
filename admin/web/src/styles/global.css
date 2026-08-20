@@ -119,6 +119,107 @@ body {
   max-height: 200px;
 }
 
+/* ByteMD Viewer / Editor 预览区表格样式：显示边框和表头背景。
+   Viewer 组件渲染容器类名为 markdown-body；Editor 预览区为 bytemd-preview / bytemd-body */
+.markdown-body table,
+.bytemd-body table,
+.bytemd-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+
+.markdown-body th,
+.markdown-body td,
+.bytemd-body th,
+.bytemd-body td,
+.bytemd-preview th,
+.bytemd-preview td {
+  border: 1px solid #d9d9d9;
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body th,
+.bytemd-body th,
+.bytemd-preview th {
+  background-color: #fafafa;
+  font-weight: 600;
+}
+
+.markdown-body tr:nth-child(even),
+.bytemd-body tr:nth-child(even),
+.bytemd-preview tr:nth-child(even) {
+  background-color: #fafafa;
+}
+
+/* Markdown Viewer 目录样式 */
+.markdown-viewer-with-toc {
+  display: flex;
+  gap: 24px;
+}
+
+.markdown-toc {
+  width: 200px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 12px;
+  align-self: flex-start;
+  max-height: calc(70vh - 24px);
+  overflow: auto;
+  padding: 12px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+}
+
+.markdown-toc-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.88);
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.markdown-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.markdown-toc-item {
+  margin: 0;
+  padding: 4px 0;
+  line-height: 1.5;
+}
+
+.markdown-toc-item button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.65);
+  cursor: pointer;
+  text-align: left;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-toc-item button:hover {
+  color: #1677ff;
+}
+
+.markdown-viewer-body {
+  flex: 1;
+  min-width: 0;
+}
+
 /* 手动渲染的表单字段标签，与 antd 垂直布局 label 对齐 */
 .field-label {
   display: inline-block;

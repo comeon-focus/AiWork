@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd';
-import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { ReloadOutlined, SearchOutlined, EyeOutlined } from '@ant-design/icons';
 import { smartDocApi, codeRepoApi } from '@/api';
 import type { CodeRepoItem, SmartDocItem } from '@/api/types';
 import { Auth } from '@/components/Auth';
 import { MarkdownEditor } from '@/components/MarkdownEditor';
+import { MarkdownViewer } from '@/components/MarkdownViewer';
 
 interface FormValues {
   title: string;
@@ -19,6 +20,7 @@ export default function SmartDocPage() {
   const [keyword, setKeyword] = useState('');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<SmartDocItem | null>(null);
+  const [viewing, setViewing] = useState<SmartDocItem | null>(null);
   const [repoOptions, setRepoOptions] = useState<CodeRepoItem[]>([]);
   const [form] = Form.useForm<FormValues>();
 
@@ -138,6 +140,9 @@ export default function SmartDocPage() {
               width: 160,
               render: (_, record) => (
                 <Space size={4}>
+                  <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => setViewing(record)}>
+                    查看
+                  </Button>
                   <Auth perms="orchestration:smartDoc:edit">
                     <Button type="link" size="small" onClick={() => openModal(record)}>
                       编辑
@@ -193,6 +198,19 @@ export default function SmartDocPage() {
             <MarkdownEditor />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        open={!!viewing}
+        width={1000}
+        title={viewing?.title}
+        onCancel={() => setViewing(null)}
+        footer={null}
+        destroyOnHidden
+      >
+        <div style={{ marginTop: 16, maxHeight: '70vh', overflow: 'auto' }}>
+          <MarkdownViewer value={viewing?.content ?? ''} />
+        </div>
       </Modal>
     </>
   );
