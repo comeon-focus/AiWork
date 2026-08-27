@@ -23,6 +23,7 @@ export async function listSmartDocs(filter: { title?: string }) {
   return SmartDoc.findAll({
     where,
     order: [['id', 'DESC']],
+    attributes: { exclude: ['content'] },
     include: [{ model: CodeRepo, as: 'codeRepo', attributes: ['id', 'name'], required: false }],
   });
 }

@@ -29,7 +29,12 @@ export async function cloneRepo(repoUrl: string, sessionId: string, timeoutMs = 
   await ensureWorkspaceDir();
   const target = taskWorkspaceDir(sessionId);
   try {
-    await execAsync(`git clone "${repoUrl}" "${target}"`, { cwd: AI_WORKSPACE_DIR, timeout: timeoutMs });
+    // --quiet：抑制 git clone 的进度输出，避免 stderr 超过 exec 默认 1MB buffer 被异常终止
+    await execAsync(`git clone --quiet "${repoUrl}" "${target}"`, {
+      cwd: AI_WORKSPACE_DIR,
+      timeout: timeoutMs,
+      maxBuffer: 50 * 1024 * 1024,
+    });
   } catch (e) {
     await fs.promises.rm(target, { recursive: true, force: true }).catch(() => undefined);
     throw e;
@@ -42,7 +47,7 @@ export async function cloneRepo(repoUrl: string, sessionId: string, timeoutMs = 
  * 切换为本地已存在的默认分支时为空操作；分支在远端存在时会自动创建本地跟踪分支。
  */
 export async function checkoutBranch(repoDir: string, branch: string, timeoutMs = 120000): Promise<void> {
-  await execAsync(`git checkout "${branch}"`, { cwd: repoDir, timeout: timeoutMs });
+  await execAsync(`git checkout "${branch}"`, { cwd: repoDir, timeout: timeoutMs, maxBuffer: 50 * 1024 * 1024 });
 }
 
 /** 判断 checkout 报错是否因「分支不存在」（pathspec 未匹配），这类情况应改走创建远程分支流程 */
@@ -55,8 +60,9 @@ export function isBranchNotFound(errMsg: string): boolean {
  * 推送失败（如无写权限）向上抛出，由调用方清理已拉取的目录。
  */
 export async function createAndPushBranch(repoDir: string, branch: string, timeoutMs = 120000): Promise<void> {
-  await execAsync(`git checkout -b "${branch}"`, { cwd: repoDir, timeout: timeoutMs });
-  await execAsync(`git push -u origin "${branch}"`, { cwd: repoDir, timeout: timeoutMs });
+  await execAsync(`git checkout -b "${branch}"`, { cwd: repoDir, timeout: timeoutMs, maxBuffer: 50 * 1024 * 1024 });
+  // --quiet：抑制 push 进度输出，避免大仓库推送时 stderr 撑爆 buffer
+  await execAsync(`git push --quiet -u origin "${branch}"`, { cwd: repoDir, timeout: timeoutMs, maxBuffer: 50 * 1024 * 1024 });
 }
 
 /** 判断任务代码库是否存在未提交的改动（用于『已结束』前的校验） */

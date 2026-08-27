@@ -10,6 +10,8 @@ import {
   CodeRepo,
   TaskQueue,
   TaskQueueItem,
+  AiTaskWorkspaceJob,
+  type WorkspaceJobStatus,
   AI_TASK_STATUS,
   type AITaskStatus,
   type AicodingStatus,
@@ -109,13 +111,31 @@ export async function listAiTasks(filter: {
   });
   const activeParentIds = new Set((activeSubs as { parentId: number }[]).map((s) => s.parentId));
 
+  // 批量查询工作区准备状态，避免前端多次轮询
+  const jobRows = await AiTaskWorkspaceJob.findAll({
+    where: { taskId: { [Op.in]: rows.map((r) => r.id) } },
+    attributes: ['taskId', 'status', 'errorMsg'],
+    raw: true,
+  });
+  const jobMap = new Map(
+    (jobRows as { taskId: number; status: WorkspaceJobStatus | 'N/A'; errorMsg: string | null }[]).map((j) => [
+      j.taskId,
+      j,
+    ]),
+  );
+
   // 计算字段必须挂到 plain 对象上：直接赋给 Sequelize 实例会被 toJSON() 丢掉，发不到前端
-  const list = rows.map((r) => ({
-    ...(r.get({ plain: true }) as Record<string, unknown>),
-    codingActive: r.codingStatus === '编译中' || activeParentIds.has(r.id),
-    // 未关联代码库、或任务结束后已回收目录的，前端据此禁用「提交代码」
-    hasWorkspace: fs.existsSync(taskWorkspaceDir(r.sessionId)),
-  }));
+  const list = rows.map((r) => {
+    const job = jobMap.get(r.id);
+    return {
+      ...(r.get({ plain: true }) as Record<string, unknown>),
+      codingActive: r.codingStatus === '编译中' || activeParentIds.has(r.id),
+      // 未关联代码库、或任务结束后已回收目录的，前端据此禁用「提交代码」
+      hasWorkspace: fs.existsSync(taskWorkspaceDir(r.sessionId)),
+      workspaceStatus: job?.status ?? 'N/A',
+      workspaceError: job?.errorMsg ?? null,
+    };
+  });
   return { rows: list, count };
 }
 
@@ -126,71 +146,162 @@ export async function createAiTask(input: AITaskInput) {
     sessionId = generateProjectId();
   }
 
-  // 解析关联智能文档对应的代码库地址
-  let repoUrl: string | null = null;
-  if (input.smartDocId) {
-    const sd = await SmartDoc.findByPk(input.smartDocId);
-    if (sd?.repoId) {
-      const repo = await CodeRepo.findByPk(sd.repoId);
-      repoUrl = repo?.address ?? null;
-    }
-  }
+  // 先写库再异步准备工作区，避免 HTTP 请求被 git clone 长时间阻塞
+  const task = await AITask.create({
+    title: input.title.trim(),
+    summary: input.summary?.trim() || null,
+    sessionId,
+    smartDocId: input.smartDocId ?? null,
+    branch: input.branch?.trim() || null,
+    branchCreated: false,
+    model: input.model?.trim() || null,
+    status: input.status ?? '待开始',
+    codingStatus: '暂无',
+    creatorId: input.creatorId ?? null,
+    creatorName: input.creatorName ?? null,
+  });
 
-  // 拉取代码库到 AiWorkSpace/<sessionId>（外层文件夹以 SessionID 命名），
-  // 并切换到创建任务时填入的代码分支。拉取 / 切换 / 建分支 / 写库 任一环节失败，
-  // 都必须把已下载的目录删掉，避免无主目录堆积占用磁盘。
-  // 子任务与父任务共用一套代码库，无需单独处理。
-  let clonedDir: string | null = null;
-  // 任务创建时是否由系统新建并推送了分支：删除任务时据此决定是否回收远程分支，
-  // 避免误删用户原本就存在、只是被任务复用的分支（如 main/develop）。
-  let branchCreated = false;
-  if (repoUrl) {
-    const target = taskWorkspaceDir(sessionId);
-    try {
-      clonedDir = await cloneRepo(repoUrl, sessionId);
-      if (input.branch) {
-        try {
-          await checkoutBranch(clonedDir, input.branch);
-        } catch (e) {
-          const msg = (e as Error).message;
-          if (isBranchNotFound(msg)) {
-            // 分支不存在：基于当前 HEAD 创建本地分支并推送远端（创建远程分支）
-            await createAndPushBranch(clonedDir, input.branch);
-            branchCreated = true;
-          } else {
-            throw ApiError.badRequest(`代码分支切换失败『${input.branch}』，AI 任务创建中止：${msg}`);
-          }
+  try {
+    if (input.smartDocId) {
+      const sd = await SmartDoc.findByPk(input.smartDocId, { attributes: ['repoId'] });
+      if (sd?.repoId) {
+        const repo = await CodeRepo.findByPk(sd.repoId, { attributes: ['address'] });
+        const repoUrl = repo?.address ?? null;
+        if (repoUrl) {
+          await AiTaskWorkspaceJob.create({
+            taskId: task.id,
+            sessionId,
+            status: '待执行',
+          });
+          // 立即尝试触发后台准备；即使失败，启动恢复与定时轮询也会兜底
+          void runWorkspacePrepWorker().catch((e: Error) =>
+            console.error('[workspacePrep] 触发失败:', e.message),
+          );
         }
       }
-    } catch (e) {
-      // 拉取 / 切换 / 建分支任一环节失败：删除已下载的目录（cloneRepo 自身已清理时这里是兜底）
-      await fs.promises.rm(target, { recursive: true, force: true }).catch(() => undefined);
-      if (e instanceof ApiError) throw e;
-      throw ApiError.badRequest(`代码库拉取失败，AI 任务创建中止：${(e as Error).message}`);
     }
-  }
-
-  let task;
-  try {
-    task = await AITask.create({
-      title: input.title.trim(),
-      summary: input.summary?.trim() || null,
-      sessionId,
-      smartDocId: input.smartDocId ?? null,
-      branch: input.branch?.trim() || null,
-      branchCreated,
-      model: input.model?.trim() || null,
-      status: input.status ?? '待开始',
-      codingStatus: '暂无',
-      creatorId: input.creatorId ?? null,
-      creatorName: input.creatorName ?? null,
-    });
   } catch (e) {
-    // 写库失败：删除已拉取的代码目录，避免无主目录堆积占盘
-    if (clonedDir) await fs.promises.rm(clonedDir, { recursive: true, force: true }).catch(() => undefined);
+    // 工作区任务创建失败时回滚已创建的 AI 任务，避免留下无准备记录的任务
+    await task.destroy().catch(() => undefined);
     throw e;
   }
+
   return task;
+}
+
+/* ── 工作区异步准备 ─────────────────────────── */
+
+/** 根据任务当前关联的智能文档解析代码库地址 */
+async function resolveRepoUrlForTask(task: AITask): Promise<string | null> {
+  if (!task.smartDocId) return null;
+  const sd = await SmartDoc.findByPk(task.smartDocId, { attributes: ['repoId'] });
+  if (!sd?.repoId) return null;
+  const repo = await CodeRepo.findByPk(sd.repoId, { attributes: ['address'] });
+  return repo?.address ?? null;
+}
+
+/** worker 互斥锁：防止多个 worker 实例同时轮询/执行 */
+let workspaceWorkerRunning = false;
+
+/** 后台执行一条工作区准备任务 */
+async function prepareWorkspaceJob(job: AiTaskWorkspaceJob) {
+  await job.update({ status: '执行中', errorMsg: null });
+  const task = await AITask.findByPk(job.taskId);
+  if (!task) {
+    await job.update({ status: '失败', errorMsg: '关联的 AI 任务不存在' });
+    return;
+  }
+
+  const repoUrl = await resolveRepoUrlForTask(task);
+  if (!repoUrl) {
+    // 无代码库：视为已完成（无需准备工作区）
+    await job.update({ status: '已完成' });
+    return;
+  }
+
+  const target = taskWorkspaceDir(task.sessionId);
+  let clonedDir: string | null = null;
+  try {
+    // 清理可能存在的残留目录，避免二次 clone 失败
+    await fs.promises.rm(target, { recursive: true, force: true }).catch(() => undefined);
+    // 大仓库 clone 可能超过默认 5min，后台准备放宽到 30min
+    clonedDir = await cloneRepo(repoUrl, task.sessionId, 30 * 60 * 1000);
+    if (task.branch) {
+      try {
+        await checkoutBranch(clonedDir, task.branch);
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (isBranchNotFound(msg)) {
+          await createAndPushBranch(clonedDir, task.branch);
+          await task.update({ branchCreated: true });
+        } else {
+          throw ApiError.badRequest(`代码分支切换失败『${task.branch}』：${msg}`);
+        }
+      }
+    }
+    await job.update({ status: '已完成' });
+  } catch (e) {
+    const reason = e instanceof ApiError ? e.message : (e as Error).message;
+    await fs.promises.rm(target, { recursive: true, force: true }).catch(() => undefined);
+    await job.update({ status: '失败', errorMsg: reason.slice(0, 500) });
+    console.error(`[workspacePrep] task=${task.id} session=${task.sessionId} 失败：${reason}`);
+  }
+}
+
+export async function runWorkspacePrepWorker() {
+  if (workspaceWorkerRunning) return;
+  workspaceWorkerRunning = true;
+  try {
+    for (;;) {
+      const job = await AiTaskWorkspaceJob.findOne({
+        where: { status: '待执行' },
+        order: [['id', 'ASC']],
+      });
+      if (!job) break;
+      await prepareWorkspaceJob(job);
+    }
+  } finally {
+    workspaceWorkerRunning = false;
+  }
+}
+
+export async function recoverStaleWorkspaceJobs() {
+  const stale = await AiTaskWorkspaceJob.findAll({
+    where: { status: '执行中' },
+    attributes: ['id', 'sessionId'],
+  });
+  for (const job of stale) {
+    await fs.promises.rm(taskWorkspaceDir(job.sessionId), { recursive: true, force: true }).catch(() => undefined);
+    await job.update({ status: '待执行' });
+  }
+  console.log(`[workspacePrep] 已回收 ${stale.length} 条残留准备工作区记录`);
+}
+
+export function startWorkspacePrepWorkerLoop() {
+  void runWorkspacePrepWorker().catch((e: Error) =>
+    console.error('[workspacePrep] 初始触发失败:', e.message),
+  );
+  setInterval(() => {
+    void runWorkspacePrepWorker().catch((e: Error) =>
+      console.error('[workspacePrep] 轮询失败:', e.message),
+    );
+  }, 5000);
+}
+
+/** 查询 AI 任务的代码库准备状态，供前端轮询 */
+export async function getTaskWorkspaceStatus(id: number) {
+  const task = await AITask.findByPk(id, { attributes: ['id', 'sessionId', 'smartDocId'] });
+  if (!task) throw ApiError.notFound('AI任务不存在');
+  const job = await AiTaskWorkspaceJob.findOne({
+    where: { taskId: id },
+    attributes: ['status', 'errorMsg'],
+  });
+  return {
+    sessionId: task.sessionId,
+    workspaceStatus: (job?.status ?? 'N/A') as WorkspaceJobStatus | 'N/A',
+    errorMsg: job?.errorMsg ?? null,
+    hasWorkspace: fs.existsSync(taskWorkspaceDir(task.sessionId)),
+  };
 }
 
 export async function updateAiTask(id: number, input: AITaskInput) {
@@ -815,7 +926,17 @@ export async function aicodingAITask(
   const sd = await SmartDoc.findByPk(task.smartDocId);
   if (!sd?.content) throw ApiError.badRequest('关联智能文档暂无需求描述内容，无法启动 AICoding');
   const sessionId = task.sessionId;
-  if (!fs.existsSync(taskWorkspaceDir(sessionId))) {
+
+  // 新任务通过 workspace job 判断准备状态；老任务无 job，按文件系统存在性兜底兼容
+  const workspaceJob = await AiTaskWorkspaceJob.findOne({
+    where: { taskId: task.id },
+    attributes: ['status'],
+  });
+  if (workspaceJob) {
+    if (workspaceJob.status !== '已完成') {
+      throw ApiError.badRequest('代码库尚未准备就绪，请等待工作区准备完成后再启动 AICoding');
+    }
+  } else if (!fs.existsSync(taskWorkspaceDir(sessionId))) {
     throw ApiError.badRequest('代码库尚未拉取，无法启动 AICoding（请确认任务创建时成功拉取了代码库）');
   }
   if (await isTaskLocked(task.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法重复启动');

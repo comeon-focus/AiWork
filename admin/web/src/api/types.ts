@@ -183,6 +183,18 @@ export const AI_CODING_STATUS_COLOR: Record<AicodingStatus, string> = {
   编译失败: 'error',
 };
 
+export type WorkspacePrepStatus = '待执行' | '执行中' | '已完成' | '失败' | 'N/A';
+
+export const WORKSPACE_PREP_STATUS: WorkspacePrepStatus[] = ['待执行', '执行中', '已完成', '失败', 'N/A'];
+
+/** 工作区准备状态轮询响应 */
+export interface WorkspaceStatusResponse {
+  sessionId: string;
+  workspaceStatus: WorkspacePrepStatus;
+  errorMsg: string | null;
+  hasWorkspace: boolean;
+}
+
 export interface AITaskItem {
   id: number;
   title: string;
@@ -207,6 +219,10 @@ export interface AITaskItem {
   codingActive?: boolean;
   /** 本地代码库目录是否存在 —— 无代码库时不能提交代码 */
   hasWorkspace?: boolean;
+  /** 工作区准备状态：待执行 / 执行中 / 已完成 / 失败 / N/A */
+  workspaceStatus?: WorkspacePrepStatus;
+  /** 工作区准备失败原因 */
+  workspaceError?: string | null;
   creatorId: number | null;
   creatorName: string | null;
   createdAt: string;

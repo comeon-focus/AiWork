@@ -101,6 +101,16 @@ router.post(
   },
 );
 
+router.get(
+  '/:id/workspace-status',
+  requirePerms('orchestration:aiTask:list'),
+  validate(idSchema, 'params'),
+  async (req, res) => {
+    const { id } = req.params as unknown as z.infer<typeof idSchema>;
+    ok(res, await service.getTaskWorkspaceStatus(id));
+  },
+);
+
 router.put(
   '/:id',
   requirePerms('orchestration:aiTask:edit'),

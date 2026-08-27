@@ -2,7 +2,13 @@ import { createApp } from './app.js';
 import { config } from './config/index.js';
 import { sequelize } from './db/index.js';
 import { recoverStaleCompileLogs } from './modules/aiCompileLog/aiCompileLog.service.js';
-import { recoverStaleTaskQueues } from './modules/taskQueue/taskQueue.service.js';
+import {
+  recoverStaleTaskQueues,
+} from './modules/taskQueue/taskQueue.service.js';
+import {
+  recoverStaleWorkspaceJobs,
+  startWorkspacePrepWorkerLoop,
+} from './modules/aiTask/aiTask.service.js';
 import { killAllRuns } from './utils/codebuddy.js';
 
 async function bootstrap() {
@@ -26,8 +32,15 @@ async function bootstrap() {
     console.error('[taskQueue] 回收残留队列失败:', e.message),
   );
 
+  // 回收服务端重启前可能停留在「执行中」的工作区准备任务
+  await recoverStaleWorkspaceJobs().catch((e: Error) =>
+    console.error('[workspacePrep] 回收残留准备工作区记录失败:', e.message),
+  );
+
   createApp().listen(config.port, () => {
     console.log(`[server] http://localhost:${config.port}/api  (${config.env})`);
+    // 启动后台工作区准备工作线程
+    startWorkspacePrepWorkerLoop();
   });
 }
 

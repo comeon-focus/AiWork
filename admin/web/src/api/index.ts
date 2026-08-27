@@ -3,6 +3,7 @@ import type {
   AITaskItem,
   AITaskInput,
   AITaskStatus,
+  WorkspaceStatusResponse,
   OrphanWorkspace,
   OrphanCleanResult,
   EndedTaskResource,
@@ -159,6 +160,8 @@ export const aiTaskApi = {
   /** 可选 AI 模型列表与系统默认模型 */
   models: () => http.get<{ models: string[]; defaultModel: string | null }>('/ai-tasks/models'),
   create: (body: AITaskInput) => http.post<AITaskItem>('/ai-tasks', body, { timeout: AI_TASK_CREATE_TIMEOUT }),
+  /** 查询工作区异步准备状态（clone / 切分支进度） */
+  workspaceStatus: (id: number) => http.get<WorkspaceStatusResponse>(`/ai-tasks/${id}/workspace-status`),
   update: (id: number, body: AITaskInput) => http.put<AITaskItem>(`/ai-tasks/${id}`, body),
   updateStatus: (id: number, status: AITaskStatus) =>
     http.patch<AITaskItem>(`/ai-tasks/${id}/status`, { status }),

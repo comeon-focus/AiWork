@@ -10,6 +10,7 @@ import type {
   AiSubTaskItem,
   SmartDocItem,
   AicodingStatus,
+  WorkspacePrepStatus,
   OrphanWorkspace,
   OrphanCleanResult,
   EndedTaskResource,
@@ -449,9 +450,13 @@ export default function AiTaskPage() {
   const [statusTarget, setStatusTarget] = useState<AITaskItem | null>(null);
   const [statusValue, setStatusValue] = useState<AITaskStatus>('待开始');
   const [form] = Form.useForm<FormValues>();
-  /** 创建任务时（拉取代码库 + 切换分支 + 写库）的加载与进度状态 */
+  /** 创建任务时（写库 + 后台准备工作区）的加载与进度状态 */
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  /** 正在后台准备工作区的任务 id 与状态 */
+  const [preparingTaskId, setPreparingTaskId] = useState<number | null>(null);
+  const [workspaceStatus, setWorkspaceStatus] = useState<WorkspacePrepStatus>('N/A');
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   /** 正在提交代码的任务 id */
   const [committingId, setCommittingId] = useState<number | null>(null);
   /** 资源回收弹窗：孤儿工作区检测与清理 */
@@ -517,10 +522,41 @@ export default function AiTaskPage() {
     return () => clearInterval(t);
   }, [anyParentCoding, load]);
 
+  // 新增任务后，轮询工作区准备状态（clone / 切分支）
+  useEffect(() => {
+    if (!preparingTaskId || workspaceStatus === '已完成' || workspaceStatus === '失败') return;
+    const poll = async () => {
+      try {
+        const s = await aiTaskApi.workspaceStatus(preparingTaskId);
+        setWorkspaceStatus(s.workspaceStatus);
+        setWorkspaceError(s.errorMsg);
+        if (s.workspaceStatus === '已完成') {
+          message.success('代码库准备完成');
+          setPreparingTaskId(null);
+          setCreating(false);
+          setOpen(false);
+          void load();
+        } else if (s.workspaceStatus === '失败') {
+          setCreateError(s.errorMsg || '代码库准备失败');
+          setCreating(false);
+        }
+      } catch (e) {
+        setCreateError((e as Error).message);
+        setCreating(false);
+      }
+    };
+    void poll();
+    const t = setInterval(poll, 3000);
+    return () => clearInterval(t);
+  }, [preparingTaskId, workspaceStatus, load]);
+
   const openModal = (record?: AITaskItem, view = false) => {
     setViewOnly(view);
     setCreating(false);
     setCreateError(null);
+    setPreparingTaskId(null);
+    setWorkspaceStatus('N/A');
+    setWorkspaceError(null);
     if (record) {
       setEditing(record);
       form.setFieldsValue({
@@ -558,32 +594,36 @@ export default function AiTaskPage() {
       setOpen(false);
       void load();
     } else {
-      // 创建任务：拉取代码库 + 切换分支 + 写库，期间锁定表单并实时展示进度
+      // 创建任务：写库后立即返回，代码库 clone / 切分支在后台进行，前端轮询进度
       setCreating(true);
       setCreateError(null);
       try {
-        await aiTaskApi.create(payload);
-        message.success('创建成功，代码库已拉取并切换至指定分支');
-        setOpen(false);
+        const task = await aiTaskApi.create(payload);
+        setPreparingTaskId(task.id);
+        setWorkspaceStatus('待执行');
+        message.success('任务已创建，正在后台准备代码库');
         void load();
+        // 弹窗保持打开并进入轮询，不在此处关闭
       } catch (e) {
         setCreateError((e as Error).message);
-      } finally {
         setCreating(false);
       }
     }
   };
 
-  /** 创建进度步骤（拉取代码库 → 切换/创建分支 → 写库）。实时反映当前阶段与失败原因。 */
+  /** 创建进度步骤（写入任务记录 → 拉取代码库 → 切换/创建分支）。实时反映后台准备状态。 */
   const createSteps = (): ('wait' | 'process' | 'finish' | 'error')[] => {
-    if (creating) return ['process', 'wait', 'wait'];
-    if (createError) {
-      if (createError.includes('代码库拉取失败')) return ['error', 'wait', 'wait'];
-      if (createError.includes('代码分支切换失败') || createError.includes('远程分支创建失败'))
-        return ['finish', 'error', 'wait'];
-      return ['finish', 'finish', 'error'];
-    }
-    return ['finish', 'finish', 'finish'];
+    const cloneStep: 'wait' | 'process' | 'finish' | 'error' =
+      workspaceStatus === '已完成' ? 'finish' : workspaceStatus === '失败' ? 'error' : creating ? 'process' : 'wait';
+    const branchStep: 'wait' | 'process' | 'finish' | 'error' =
+      workspaceStatus === '已完成'
+        ? 'finish'
+        : workspaceStatus === '失败'
+          ? 'error'
+          : cloneStep === 'process'
+            ? 'process'
+            : 'wait';
+    return ['finish', cloneStep, branchStep];
   };
 
   const openStatusModal = (record: AITaskItem) => {
@@ -850,6 +890,21 @@ export default function AiTaskPage() {
             { title: '创建人', dataIndex: 'creatorName', width: 120, render: (v: string | null) => v || '-' },
             { title: '创建时间', dataIndex: 'createdAt', width: 180 },
             {
+              title: '工作区',
+              dataIndex: 'workspaceStatus',
+              width: 120,
+              render: (v: WorkspacePrepStatus, record: AITaskItem) => {
+                if (!v || v === 'N/A') return <span style={{ color: '#999' }}>-</span>;
+                const color =
+                  v === '已完成' ? 'success' : v === '失败' ? 'error' : v === '执行中' ? 'processing' : 'default';
+                return (
+                  <Tooltip title={record.workspaceError || ''}>
+                    <Tag color={color}>{v}</Tag>
+                  </Tooltip>
+                );
+              },
+            },
+            {
               title: '操作',
               width: 240,
               fixed: 'right',
@@ -898,7 +953,15 @@ export default function AiTaskPage() {
                         <Button
                           type="link"
                           size="small"
-                          disabled={record.codingStatus === '编译中' || record.codingActive || record.status === '已结束'}
+                          disabled={
+                            record.codingStatus === '编译中' ||
+                            record.codingActive ||
+                            record.status === '已结束' ||
+                            !(
+                              record.workspaceStatus === '已完成' ||
+                              (record.workspaceStatus === 'N/A' && record.hasWorkspace)
+                            )
+                          }
                         >
                           AICoding
                         </Button>
@@ -968,29 +1031,33 @@ export default function AiTaskPage() {
                 size="small"
                 items={[
                   {
-                    title: '拉取代码库',
+                    title: '写入任务记录',
                     status: createSteps()[0],
-                    description:
-                      createError && createError.includes('代码库拉取失败')
-                        ? createError
-                        : creating
-                          ? '正在克隆关联智能文档指向的代码库…'
-                          : '已完成',
+                    description: createError ? createError : creating ? '任务记录已写入，正在后台准备代码库…' : '已完成',
                   },
                   {
-                    title: '切换代码分支',
+                    title: '拉取代码库',
                     status: createSteps()[1],
                     description:
-                      createError && (createError.includes('代码分支切换失败') || createError.includes('远程分支创建失败'))
-                        ? createError
-                        : creating
-                          ? '等待代码库拉取完成，分支不存在则创建远程分支…'
-                          : '已完成',
+                      workspaceStatus === '失败'
+                        ? workspaceError || '代码库拉取失败'
+                        : workspaceStatus === '已完成'
+                          ? '已完成'
+                          : creating
+                            ? '正在克隆关联智能文档指向的代码库…'
+                            : '等待中',
                   },
                   {
-                    title: '写入任务记录',
+                    title: '切换/创建代码分支',
                     status: createSteps()[2],
-                    description: createError && !createError.includes('代码库拉取失败') && !createError.includes('代码分支切换失败') ? createError : creating ? '等待前序步骤完成…' : '已完成',
+                    description:
+                      workspaceStatus === '失败'
+                        ? workspaceError || '分支切换或创建失败'
+                        : workspaceStatus === '已完成'
+                          ? '已完成'
+                          : creating
+                            ? '等待代码库拉取完成，分支不存在则创建远程分支…'
+                            : '等待中',
                   },
                 ]}
               />

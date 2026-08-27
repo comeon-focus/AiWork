@@ -13,6 +13,11 @@ import { Requirement } from './requirement.js';
 import { RequirementFile } from './requirementFile.js';
 import { SmartDoc } from './smartDoc.js';
 import { AITask, AI_TASK_STATUS, AI_CODING_STATUS, type AITaskStatus, type AicodingStatus } from './aiTask.js';
+import {
+  AiTaskWorkspaceJob,
+  WORKSPACE_JOB_STATUS,
+  type WorkspaceJobStatus,
+} from './aiTaskWorkspaceJob.js';
 import { AiSubTask } from './aiSubTask.js';
 import {
   AiCompileLog,
@@ -63,6 +68,10 @@ SmartDoc.belongsTo(CodeRepo, { foreignKey: 'repoId', as: 'codeRepo' });
 /* ── AI 任务 ↔ 智能文档（单关联） ────────────────── */
 AITask.belongsTo(SmartDoc, { foreignKey: 'smartDocId', as: 'smartDoc' });
 SmartDoc.hasMany(AITask, { foreignKey: 'smartDocId', as: 'aiTasks' });
+
+/* ── AI 任务 ↔ 工作区准备任务（单关联） ──────────── */
+AITask.hasOne(AiTaskWorkspaceJob, { foreignKey: 'taskId', as: 'workspaceJob' });
+AiTaskWorkspaceJob.belongsTo(AITask, { foreignKey: 'taskId', as: 'task' });
 
 /* ── AI 子任务 ↔ AI 任务（归属） ────────────────── */
 AiSubTask.belongsTo(AITask, { foreignKey: 'parentId', as: 'parent' });
@@ -140,6 +149,9 @@ export {
   type AITaskStatus,
   AI_CODING_STATUS,
   type AicodingStatus,
+  AiTaskWorkspaceJob,
+  WORKSPACE_JOB_STATUS,
+  type WorkspaceJobStatus,
   AiSubTask,
   AiCompileLog,
   AI_COMPILE_STATUS,
