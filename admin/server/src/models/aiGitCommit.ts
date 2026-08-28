@@ -36,6 +36,8 @@ export class AiGitCommit extends Model<
   declare changedFiles: CreationOptional<number | null>;
   /** 改动明细：每行「状态 路径」 */
   declare changedDetail: CreationOptional<string | null>;
+  /** 每个改动文件对应的 diff 内容，JSON 对象：{ [path]: diffText } */
+  declare changedFileDiffs: CreationOptional<string | null>;
   /** 失败原因（status 为『提交失败』时有值） */
   declare errorMsg: CreationOptional<string | null>;
   declare creatorId: CreationOptional<number | null>;
@@ -60,6 +62,7 @@ AiGitCommit.init(
     commitHash: { type: DataTypes.STRING(40), allowNull: true, comment: '短 commit hash' },
     changedFiles: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, comment: '本次提交涉及的文件数' },
     changedDetail: { type: DataTypes.TEXT, allowNull: true, comment: '改动明细：每行「状态 路径」' },
+    changedFileDiffs: { type: DataTypes.TEXT('long'), allowNull: true, comment: '每个改动文件对应的 diff 内容，JSON 对象' },
     // 失败原因会带上 git stderr，512 不够用（推送失败的报错常见 300~600 字）
     errorMsg: { type: DataTypes.STRING(1000), allowNull: true, comment: '失败原因' },
     creatorId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },

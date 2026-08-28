@@ -6,6 +6,7 @@ import {
   Descriptions,
   Drawer,
   Input,
+  Modal,
   Popconfirm,
   Select,
   Space,
@@ -15,17 +16,142 @@ import {
   Typography,
   message,
 } from 'antd';
-import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { EyeOutlined, FullscreenExitOutlined, FullscreenOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { aiGitCommitApi } from '@/api';
 import type { AiGitCommitItem, AiGitCommitStatus } from '@/api/types';
 import { AI_GIT_COMMIT_STATUS, AI_GIT_COMMIT_STATUS_COLOR } from '@/api/types';
 import { Auth } from '@/components/Auth';
 import { SessionIdTag } from '@/components/SessionIdTag';
 
+interface ChangedFile {
+  status: string;
+  path: string;
+  diff: string | null;
+}
+
+/** 解析改动明细：每行「状态 路径」，重命名取目标路径。
+ * 兼容两种存储格式：
+ * - 原始 porcelain：" M path" / "M  path" / "MM path"，第 3 列（索引 2）固定为分隔空格
+ * - 旧数据被 trim 过："M path"，状态后第一个空格即为分隔
+ */
+function parseChangedDetail(detail: string | null | undefined, diffs: Record<string, string> | null): ChangedFile[] {
+  if (!detail) return [];
+  return detail
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      // 标准 porcelain：第 3 个字符是空格，且第 2 个字符不是空格（否则是 "M  path"，应走 else 分支按第一个空格切分）
+      let status: string;
+      let pathPart: string;
+      if (line.length > 2 && line[2] === ' ' && line[1] !== ' ') {
+        status = line.slice(0, 2).trim();
+        pathPart = line.slice(3);
+      } else {
+        const sep = line.indexOf(' ');
+        status = sep > 0 ? line.slice(0, sep).trim() : line.trim();
+        pathPart = sep > 0 ? line.slice(sep + 1).trimStart() : '';
+      }
+      const arrow = pathPart.indexOf(' -> ');
+      const path = arrow >= 0 ? pathPart.slice(arrow + 4) : pathPart;
+      return { status, path, diff: diffs?.[path] ?? null };
+    });
+}
+
+/** 按 git diff 语义给每行加背景色，方便定位增删改 */
+function DiffRenderer({ diff, maxHeight = 520 }: { diff: string; maxHeight?: number | string }) {
+  if (!diff) return null;
+  // 非标准 git diff（如提示文案）仍按原样展示
+  if (!diff.startsWith('diff --git') && !diff.includes('\ndiff --git')) {
+    return (
+      <pre
+        style={{
+          margin: 0,
+          maxHeight,
+          overflow: 'auto',
+          fontSize: 12,
+          background: '#f6f8fa',
+          padding: 12,
+          borderRadius: 4,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+        }}
+      >
+        {diff}
+      </pre>
+    );
+  }
+
+  const lines = diff.split('\n');
+  return (
+    <div
+      style={{
+        maxHeight,
+        overflow: 'auto',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontSize: 12,
+        background: '#f6f8fa',
+        borderRadius: 4,
+        padding: '8px 0',
+      }}
+    >
+      {lines.map((line, i) => {
+        let background = 'transparent';
+        let color = '#24292f';
+        if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('--- ') || line.startsWith('+++ ')) {
+          background = '#eaeef2';
+          color = '#57606a';
+        } else if (line.startsWith('@@')) {
+          background = '#ddf4ff';
+          color = '#0550ae';
+        } else if (line.startsWith('+') && !line.startsWith('+++ ')) {
+          background = '#dafbe1';
+          color = '#1a7f37';
+        } else if (line.startsWith('-') && !line.startsWith('--- ')) {
+          background = '#ffebe9';
+          color = '#cf222e';
+        }
+        return (
+          <div key={i} style={{ whiteSpace: 'pre', padding: '1px 12px', background, color }}>
+            {line || '\u00A0'}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** git status 简写转可读标签 */
+function statusLabel(status: string): string {
+  const map: Record<string, string> = {
+    M: '修改',
+    A: '新增',
+    D: '删除',
+    R: '重命名',
+    C: '复制',
+    '??': '未跟踪',
+  };
+  return map[status] || status || '未知';
+}
+
+function statusColor(status: string): string {
+  if (status === 'A') return 'green';
+  if (status === 'D') return 'red';
+  if (status === 'M') return 'blue';
+  if (status === 'R') return 'purple';
+  return 'default';
+}
+
 /** 提交详情抽屉：列表不下发改动明细，打开时按 id 再拉一次完整记录 */
 function CommitDrawer({ record, open, onClose }: { record: AiGitCommitItem; open: boolean; onClose: () => void }) {
   const [detail, setDetail] = useState<AiGitCommitItem>(record);
   const [loading, setLoading] = useState(false);
+  const [diffModal, setDiffModal] = useState<{ open: boolean; title: string; diff: string; fullscreen: boolean }>({
+    open: false,
+    title: '',
+    diff: '',
+    fullscreen: false,
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -46,6 +172,24 @@ function CommitDrawer({ record, open, onClose }: { record: AiGitCommitItem; open
   }, [open, record]);
 
   const failed = detail.status === '提交失败';
+
+  const fileDiffs = (() => {
+    try {
+      return detail.changedFileDiffs ? (JSON.parse(detail.changedFileDiffs) as Record<string, string>) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const changedFiles = parseChangedDetail(detail.changedDetail, fileDiffs);
+
+  const openDiff = (file: ChangedFile) => {
+    setDiffModal({
+      open: true,
+      title: `文件改动 · ${file.path}`,
+      diff: file.diff || '（暂无该文件 diff 明细）',
+      fullscreen: false,
+    });
+  };
 
   return (
     <Drawer
@@ -110,13 +254,64 @@ function CommitDrawer({ record, open, onClose }: { record: AiGitCommitItem; open
         </Typography.Text>
       </Card>
 
-      <Card size="small" title="改动明细">
-        {detail.changedDetail ? (
-          <pre style={{ margin: 0, maxHeight: 320, overflow: 'auto', fontSize: 12 }}>{detail.changedDetail}</pre>
+      <Card size="small" title="改动文件">
+        {changedFiles.length > 0 ? (
+          <Table<ChangedFile>
+            rowKey="path"
+            size="small"
+            pagination={false}
+            dataSource={changedFiles}
+            columns={[
+              {
+                title: '状态',
+                dataIndex: 'status',
+                width: 80,
+                render: (v: string) => <Tag color={statusColor(v)}>{statusLabel(v)}</Tag>,
+              },
+              { title: '文件路径', dataIndex: 'path', ellipsis: true },
+              {
+                title: '操作',
+                width: 110,
+                render: (_, file) => (
+                  <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => openDiff(file)}>
+                    查看明细
+                  </Button>
+                ),
+              },
+            ]}
+          />
         ) : (
           <span style={{ color: '#999' }}>无</span>
         )}
       </Card>
+
+      <Modal
+        open={diffModal.open}
+        title={diffModal.title}
+        width={diffModal.fullscreen ? '100vw' : 900}
+        styles={
+          diffModal.fullscreen
+            ? { content: { height: '100vh', maxHeight: '100vh', borderRadius: 0 }, body: { height: 'calc(100vh - 110px)' } }
+            : undefined
+        }
+        style={diffModal.fullscreen ? { top: 0, paddingBottom: 0 } : undefined}
+        onCancel={() => setDiffModal((m) => ({ ...m, open: false }))}
+        footer={[
+          <Button
+            key="fullscreen"
+            icon={diffModal.fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+            onClick={() => setDiffModal((m) => ({ ...m, fullscreen: !m.fullscreen }))}
+          >
+            {diffModal.fullscreen ? '退出全屏' : '全屏'}
+          </Button>,
+          <Button key="close" onClick={() => setDiffModal((m) => ({ ...m, open: false }))}>
+            关闭
+          </Button>,
+        ]}
+        destroyOnHidden
+      >
+        <DiffRenderer diff={diffModal.diff} maxHeight={diffModal.fullscreen ? 'calc(100vh - 130px)' : 520} />
+      </Modal>
     </Drawer>
   );
 }

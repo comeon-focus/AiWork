@@ -1,7 +1,9 @@
 import { Editor } from '@bytemd/react';
 import gfm from '@bytemd/plugin-gfm';
 import 'bytemd/dist/index.css';
+import './markdownCode.css';
 import { tokenStore } from '@/utils/token';
+import { normalizeTextCodeBlock } from './bytemdPlugins';
 
 interface Props {
   value?: string;
@@ -40,7 +42,7 @@ export function MarkdownEditor({ value, onChange }: Props) {
     <Editor
       value={value ?? ''}
       onChange={(v) => onChange?.(v)}
-      plugins={[gfm()]}
+      plugins={[gfm(), normalizeTextCodeBlock()]}
       uploadImages={uploadImages}
       placeholder="支持 Markdown，可通过工具栏 / 粘贴 / 拖拽上传图片"
     />

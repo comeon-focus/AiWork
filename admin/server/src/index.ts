@@ -9,6 +9,7 @@ import {
   recoverStaleWorkspaceJobs,
   startWorkspacePrepWorkerLoop,
 } from './modules/aiTask/aiTask.service.js';
+import { loadConfigCache } from './modules/config/config.service.js';
 import { killAllRuns } from './utils/codebuddy.js';
 
 async function bootstrap() {
@@ -35,6 +36,11 @@ async function bootstrap() {
   // 回收服务端重启前可能停留在「执行中」的工作区准备任务
   await recoverStaleWorkspaceJobs().catch((e: Error) =>
     console.error('[workspacePrep] 回收残留准备工作区记录失败:', e.message),
+  );
+
+  // 加载系统配置到内存缓存，供 AICoding 并发限制等运行时配置使用
+  await loadConfigCache().catch((e: Error) =>
+    console.error('[config] 加载系统配置失败:', e.message),
   );
 
   createApp().listen(config.port, () => {

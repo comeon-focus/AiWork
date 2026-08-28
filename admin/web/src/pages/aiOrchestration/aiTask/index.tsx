@@ -19,8 +19,6 @@ import type {
 import { AI_TASK_STATUS, AI_CODING_STATUS_COLOR } from '@/api/types';
 import { Auth } from '@/components/Auth';
 import { SessionIdTag } from '@/components/SessionIdTag';
-import { SessionViewerModal } from '@/components/SessionViewerModal';
-import type { TaskSessionView } from '@/api/types';
 
 /** 后端「需二次确认」业务码（见 server/src/utils/ApiError.ts NEED_CONFIRM） */
 const NEED_CONFIRM = 40901;
@@ -57,6 +55,8 @@ interface SubFormValues {
   smartDocId?: number | null;
   sessionId?: string;
   branch?: string;
+  /** 继承父任务的 AI 模型，仅展示不可编辑 */
+  model?: string;
   status?: AITaskStatus;
 }
 
@@ -127,6 +127,7 @@ function SubTaskModal({
 
   const openModal = (record?: AiSubTaskItem, view = false) => {
     setViewOnly(view);
+    const inheritedModel = record?.model ?? parent.model ?? '';
     if (record) {
       setEditing(record);
       form.setFieldsValue({
@@ -135,6 +136,7 @@ function SubTaskModal({
         smartDocId: record.smartDocId ?? null,
         sessionId: parent.sessionId,
         branch: parent.branch ?? undefined,
+        model: inheritedModel,
         status: record.status,
       });
     } else {
@@ -145,6 +147,7 @@ function SubTaskModal({
         smartDocId: null,
         sessionId: parent.sessionId,
         branch: parent.branch ?? undefined,
+        model: inheritedModel,
         status: '待开始',
       });
     }
@@ -194,18 +197,6 @@ function SubTaskModal({
     await aiSubTaskApi.remove(id);
     message.success('删除成功');
     void load();
-  };
-
-  /** AICoding 会话查看器（子任务与父任务共用同一 sessionId） */
-  const [subSessionOpen, setSubSessionOpen] = useState(false);
-  const [subSessionTitle, setSubSessionTitle] = useState('AICoding 会话');
-  const [subSessionLoader, setSubSessionLoader] = useState<() => Promise<TaskSessionView>>(
-    () => async () => ({ sessionId: '', exists: false, messages: [], compileLog: null }),
-  );
-  const openSubSession = (id: number, title: string) => {
-    setSubSessionLoader(() => () => aiSubTaskApi.session(id));
-    setSubSessionTitle(`AICoding 会话 · ${title}`);
-    setSubSessionOpen(true);
   };
 
   const startSubAicoding = async (id: number) => {
@@ -305,11 +296,6 @@ function SubTaskModal({
             width: 220,
             render: (_, record) => (
               <Space size={4}>
-                <Auth perms="orchestration:aiTask:list">
-                  <Button type="link" size="small" onClick={() => openSubSession(record.id, record.title)}>
-                    对话
-                  </Button>
-                </Auth>
                 <Auth perms="orchestration:aiTask:edit">
                   <Button
                     type="link"
@@ -391,6 +377,9 @@ function SubTaskModal({
           <Form.Item name="branch" label="代码分支" extra="自动继承父任务代码分支，不可修改">
             <Input placeholder="继承自父任务" maxLength={100} disabled />
           </Form.Item>
+          <Form.Item name="model" label="AI 模型" extra="自动继承父任务选用的模型，不可修改">
+            <Input placeholder="继承自父任务" disabled />
+          </Form.Item>
           <Form.Item name="status" label="任务状态" rules={[{ required: true, message: '请选择任务状态' }]}>
             <Select options={AI_TASK_STATUS.map((s) => ({ label: s, value: s }))} disabled={viewOnly} />
           </Form.Item>
@@ -418,12 +407,6 @@ function SubTaskModal({
         </div>
       </Modal>
 
-      <SessionViewerModal
-        open={subSessionOpen}
-        title={subSessionTitle}
-        load={subSessionLoader}
-        onClose={() => setSubSessionOpen(false)}
-      />
     </>
   );
 }
@@ -467,12 +450,6 @@ export default function AiTaskPage() {
   /** 已结束任务资源占用列表 */
   const [endedList, setEndedList] = useState<EndedTaskResource[]>([]);
   const [endedLoading, setEndedLoading] = useState(false);
-  /** AICoding 会话查看器 */
-  const [sessionOpen, setSessionOpen] = useState(false);
-  const [sessionTitle, setSessionTitle] = useState('AICoding 会话');
-  const [sessionLoader, setSessionLoader] = useState<() => Promise<TaskSessionView>>(
-    () => async () => ({ sessionId: '', exists: false, messages: [], compileLog: null }),
-  );
 
   /** 字节数转人类可读 */
   const formatBytes = (bytes: number): string => {
@@ -750,13 +727,6 @@ export default function AiTaskPage() {
     }
   };
 
-  /** 打开 AICoding 会话查看器（父任务） */
-  const openSession = (id: number, title: string) => {
-    setSessionLoader(() => () => aiTaskApi.session(id));
-    setSessionTitle(`AICoding 会话 · ${title}`);
-    setSessionOpen(true);
-  };
-
   return (
     <>
       <Alert
@@ -914,11 +884,6 @@ export default function AiTaskPage() {
                     <Auth perms="orchestration:aiTask:list">
                       <Button type="link" size="small" onClick={() => openSubModal(record)}>
                         子任务
-                      </Button>
-                    </Auth>
-                    <Auth perms="orchestration:aiTask:list">
-                      <Button type="link" size="small" onClick={() => openSession(record.id, record.title)}>
-                        对话
                       </Button>
                     </Auth>
                     <Auth perms="orchestration:aiTask:edit">
@@ -1252,12 +1217,6 @@ export default function AiTaskPage() {
         />
       </Modal>
 
-      <SessionViewerModal
-        open={sessionOpen}
-        title={sessionTitle}
-        load={sessionLoader}
-        onClose={() => setSessionOpen(false)}
-      />
     </>
   );
 }

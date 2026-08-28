@@ -116,15 +116,4 @@ router.delete(
   },
 );
 
-/** AICoding 会话查看：子任务与父任务共用同一 sessionId，展示同一段会话 */
-router.get(
-  '/:id/session',
-  requirePerms('orchestration:aiTask:list'),
-  validate(idSchema, 'params'),
-  async (req, res) => {
-    const { id } = req.params as unknown as z.infer<typeof idSchema>;
-    ok(res, await service.getSubTaskSession(id));
-  },
-);
-
 export default router;

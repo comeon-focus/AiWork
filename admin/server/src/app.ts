@@ -22,6 +22,7 @@ import dataSimInterfaceRouter from './modules/dataSim/dataSimInterface.router.js
 import dataTaskRouter from './modules/dataTask/dataTask.router.js';
 import mockRouter from './modules/dataSim/mock.router.js';
 import logRouter from './modules/log/log.router.js';
+import configRouter from './modules/config/config.router.js';
 import { REQUIREMENT_UPLOAD_DIR } from './middleware/upload.js';
 import './models/index.js';
 
@@ -60,6 +61,7 @@ export function createApp() {
   app.use('/api/data-sim-interfaces', authenticate, dataSimInterfaceRouter);
   app.use('/api/data-tasks', authenticate, dataTaskRouter);
   app.use('/api/logs', authenticate, logRouter);
+  app.use('/api/configs', authenticate, configRouter);
 
   // 数据模拟对外调用入口（免鉴权），需在 notFoundHandler 之前挂载
   app.use('/mock', mockRouter);

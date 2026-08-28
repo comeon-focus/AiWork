@@ -19,6 +19,7 @@ import {
   type WorkspaceJobStatus,
 } from './aiTaskWorkspaceJob.js';
 import { AiSubTask } from './aiSubTask.js';
+import { Config } from './config.js';
 import {
   AiCompileLog,
   AI_COMPILE_STATUS,
@@ -153,6 +154,7 @@ export {
   WORKSPACE_JOB_STATUS,
   type WorkspaceJobStatus,
   AiSubTask,
+  Config,
   AiCompileLog,
   AI_COMPILE_STATUS,
   type AiCompileStatus,

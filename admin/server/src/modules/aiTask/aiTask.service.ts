@@ -35,10 +35,10 @@ import {
   commitAllAndPush,
   GitAfterCommitError,
   deleteRemoteBranch,
-  findCodebuddySessionFile,
   type CommitResult,
 } from '../../utils/git.js';
 import { runAICoding, resolveModel, MODEL_WHITELIST } from '../../utils/codebuddy.js';
+import { getAiConcurrentParentLimit } from '../config/config.service.js';
 import {
   startCompileLog,
   appendCompileLine,
@@ -572,101 +572,6 @@ export async function reclaimEndedTaskResources(id: number, opts?: { force?: boo
   return { removedWorkspace: false, removedBranch: false, removedSession: true, freedBytes: 0 };
 }
 
-/* ── 会话查看器 ─────────────────────────── */
-
-/** 单条会话消息（角色 + 文本） */
-export interface SessionMessage {
-  role: string;
-  text: string;
-  timestamp?: number | null;
-}
-
-/** 某任务的 AICoding 会话视图：对话记录（来自 codebuddy jsonl）+ 最近一次编译的改动摘要 */
-export interface TaskSessionView {
-  sessionId: string;
-  /** 会话 jsonl 是否存在（工作区被回收后可能已不在） */
-  exists: boolean;
-  messages: SessionMessage[];
-  /** 最近一条编译记录摘要（含改动明细），可能为空 */
-  compileLog: Record<string, unknown> | null;
-}
-
-/** 单条消息文本上限与总条数上限，避免超大会话撑爆响应 */
-const MAX_SESSION_TEXT = 8000;
-const MAX_SESSION_MESSAGES = 500;
-
-/** 从 content 数组/字符串中抽取可读文本；工具调用折叠成 `[工具调用: name] ...` */
-function extractMessageText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((p) => {
-        if (typeof p === 'string') return p;
-        const o = p as { text?: string; type?: string; name?: string; input?: unknown };
-        if (typeof o?.text === 'string') return o.text;
-        if (o?.type === 'function_call' || o?.type === 'tool_use') {
-          const name = o.name ?? 'tool';
-          const input = typeof o.input === 'string' ? o.input : JSON.stringify(o.input ?? '');
-          return `[工具调用: ${name}] ${input.slice(0, 500)}`;
-        }
-        return '';
-      })
-      .filter(Boolean)
-      .join('\n');
-  }
-  if (content && typeof content === 'object') {
-    const o = content as { text?: string };
-    if (typeof o?.text === 'string') return o.text;
-  }
-  return '';
-}
-
-/** 读取并解析 codebuddy 会话 jsonl（每行一条 JSON 消息） */
-async function readSessionMessages(file: string): Promise<SessionMessage[]> {
-  const raw = await fs.promises.readFile(file, 'utf8').catch(() => '');
-  const out: SessionMessage[] = [];
-  for (const line of raw.split('\n')) {
-    const l = line.trim();
-    if (!l) continue;
-    let obj: Record<string, unknown>;
-    try {
-      obj = JSON.parse(l);
-    } catch {
-      continue;
-    }
-    const role = (obj.role as string) ?? '';
-    const text = extractMessageText(obj.content).slice(0, MAX_SESSION_TEXT);
-    if (!role && !text) continue;
-    out.push({ role, text, timestamp: (obj.timestamp as number) ?? null });
-  }
-  // 只保留末尾 MAX_SESSION_MESSAGES 条，避免超长会话撑爆响应
-  return out.length > MAX_SESSION_MESSAGES ? out.slice(out.length - MAX_SESSION_MESSAGES) : out;
-}
-
-/** 按 sessionId + 任务（及可选子任务）拼装会话视图，父子任务共用同一 sessionId */
-export async function buildSessionView(
-  sessionId: string,
-  taskId: number,
-  subTaskId: number | null,
-): Promise<TaskSessionView> {
-  const file = await findCodebuddySessionFile(sessionId);
-  const messages = file ? await readSessionMessages(file) : [];
-  const log = await latestCompileLog({ sessionId, taskId, subTaskId: subTaskId ?? null });
-  return {
-    sessionId,
-    exists: !!file,
-    messages,
-    compileLog: log ? (log.get({ plain: true }) as Record<string, unknown>) : null,
-  };
-}
-
-/** 父任务 AICoding 会话视图（父子共享同一 sessionId） */
-export async function getTaskSession(taskId: number): Promise<TaskSessionView> {
-  const task = await AITask.findByPk(taskId);
-  if (!task) throw ApiError.notFound('AI任务不存在');
-  return buildSessionView(task.sessionId, task.id, null);
-}
-
 /* ── 提交代码 ─────────────────────────── */
 
 /**
@@ -724,6 +629,7 @@ export async function commitAiTaskCode(
         branch: r.branch,
         changedFiles: r.changedFiles,
         changedDetail: r.detail,
+        changedFileDiffs: JSON.stringify(r.fileDiffs),
       });
     }
     return fail(`提交代码失败：${(e as Error).message}`);
@@ -737,6 +643,7 @@ export async function commitAiTaskCode(
     commitHash: result.commitHash,
     changedFiles: result.changedFiles,
     changedDetail: result.detail,
+    changedFileDiffs: JSON.stringify(result.fileDiffs),
   });
   return { ...result, message };
 }
@@ -910,7 +817,7 @@ export async function startAicodingRun(input: StartRunInput): Promise<void> {
         }
       })();
     },
-  });
+  }, resolvedModel);
 }
 
 /** 启动父任务 AICoding：调用 codebuddy 基于关联智能文档在代码库下改代码 */
@@ -941,8 +848,9 @@ export async function aicodingAITask(
   }
   if (await isTaskLocked(task.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法重复启动');
   if (!opts?.fromQueue) await assertParentNotInRunningQueue(task.id);
-  if (await activeCodingParentCount(task.id) >= 2) {
-    throw ApiError.badRequest('最多允许两个任务同时进行 AICoding，请稍后再试');
+  const concurrentLimit = getAiConcurrentParentLimit();
+  if (Number.isFinite(concurrentLimit) && (await activeCodingParentCount(task.id)) >= concurrentLimit) {
+    throw ApiError.badRequest(`最多允许 ${concurrentLimit} 个任务同时进行 AICoding，请稍后再试`);
   }
 
   await task.update({ codingStatus: '编译中', codingError: null, status: '进行中' });

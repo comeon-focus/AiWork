@@ -194,10 +194,15 @@ export interface CommitResult {
   branch: string;
   /** 改动明细：每行「状态 路径」，超出上限截断 */
   detail: string;
+  /** 每个改动文件对应的 diff 内容 */
+  fileDiffs: Record<string, string>;
 }
 
 /** 提交记录里保留的改动明细最大行数 */
 const MAX_DETAIL_LINES = 200;
+
+/** 单文件 diff 入库上限，避免超大文件撑爆 LONGTEXT */
+const MAX_FILE_DIFF_BYTES = 64 * 1024;
 
 /**
  * commit 已经落地之后的失败（拉取或推送）。
@@ -215,14 +220,39 @@ export class GitAfterCommitError extends Error {
   }
 }
 
-/** porcelain 输出转成可读明细，过长时截断 */
+/** porcelain 输出转成可读明细，过长时截断。只去行尾空格，保留行首状态前缀，避免路径首字符被切掉 */
 function buildDetail(status: string): string {
   const lines = status
     .split('\n')
-    .map((l) => l.trim())
+    .map((l) => l.trimEnd())
     .filter(Boolean);
   if (lines.length <= MAX_DETAIL_LINES) return lines.join('\n');
   return [...lines.slice(0, MAX_DETAIL_LINES), `… 其余 ${lines.length - MAX_DETAIL_LINES} 个文件省略`].join('\n');
+}
+
+/**
+ * 为每个改动文件生成 diff（基于刚生成的 commit）。
+ * 单个文件 diff 超过上限时截断并追加提示。
+ */
+async function buildFileDiffs(dir: string, commitHash: string, files: string[]): Promise<Record<string, string>> {
+  const diffs: Record<string, string> = {};
+  for (const file of files) {
+    try {
+      const { stdout } = await execFileAsync(
+        'git',
+        ['-c', 'core.quotepath=false', 'show', commitHash, '--', file],
+        { cwd: dir, timeout: 30000, maxBuffer: 8 * 1024 * 1024 },
+      );
+      const raw = stdout;
+      diffs[file] =
+        Buffer.byteLength(raw, 'utf8') > MAX_FILE_DIFF_BYTES
+          ? `${raw.slice(0, MAX_FILE_DIFF_BYTES)}\n… 文件 diff 过长，已截断`
+          : raw;
+    } catch {
+      diffs[file] = '（无法获取该文件 diff）';
+    }
+  }
+  return diffs;
 }
 
 /**
@@ -265,7 +295,8 @@ export async function commitAllAndPush(
   // -uall：未跟踪目录展开成具体文件，否则整个新目录只算 1 个改动
   const status = await gitExec(dir, ['status', '--porcelain', '-uall'], 30000);
   if (!status) return null;
-  const changedFiles = parsePorcelain(status).size;
+  const changed = parsePorcelain(status);
+  const changedFiles = changed.size;
   // 明细必须在 add 之前取：add 之后 porcelain 全变成 A/M 暂存态，看不出原本是新增还是修改
   const detail = buildDetail(status);
 
@@ -273,7 +304,8 @@ export async function commitAllAndPush(
   await gitExec(dir, ['add', '-A'], timeoutMs);
   await gitExec(dir, ['commit', '-m', message], timeoutMs);
   const commitHash = await gitExec(dir, ['rev-parse', '--short', 'HEAD'], 30000);
-  const result: CommitResult = { changedFiles, commitHash, branch, detail };
+  const fileDiffs = await buildFileDiffs(dir, commitHash, Array.from(changed));
+  const result: CommitResult = { changedFiles, commitHash, branch, detail, fileDiffs };
 
   try {
     await gitExec(dir, ['pull', '--rebase', 'origin', branch], timeoutMs);
@@ -383,20 +415,3 @@ export async function clearCodebuddySession(sessionId: string): Promise<void> {
   }
 }
 
-/**
- * 定位某 sessionId 对应的 codebuddy 会话 jsonl 文件。
- * 会话记录实际落在 <home>/projects/<compressPath(工作目录)>/<sessionId>.jsonl>，
- * 目录名以 `-<sessionId>` 结尾（工作目录以 sessionId 命名），据此扫描即可命中。
- * 不依赖工作区是否存在（工作区被回收后会话记录仍在），找不到返回 null。
- */
-export async function findCodebuddySessionFile(sessionId: string): Promise<string | null> {
-  const projectsDir = path.join(codebuddyHomeDir(), 'projects');
-  const entries = await fs.promises.readdir(projectsDir).catch(() => [] as string[]);
-  for (const name of entries) {
-    if (name === sessionId || name.endsWith(`-${sessionId}`)) {
-      const f = path.join(projectsDir, name, `${sessionId}.jsonl`);
-      if (fs.existsSync(f)) return f;
-    }
-  }
-  return null;
-}

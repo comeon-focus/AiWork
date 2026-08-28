@@ -20,6 +20,8 @@ export class AiSubTask extends Model<InferAttributes<AiSubTask>, InferCreationAt
   declare smartDocId: number | null;
   /** 代码分支 */
   declare branch: string | null;
+  /** 选用的 AI 模型；继承父任务，为空/null 表示使用系统默认模型 */
+  declare model: string | null;
   /** 任务状态：待开始 / 进行中 / 已结束 */
   declare status: AITaskStatus;
   /** AICoding 状态：暂无 / 编译中 / 编译成功 / 编译失败 */
@@ -41,6 +43,7 @@ AiSubTask.init(
     sessionId: { type: DataTypes.STRING(16), allowNull: true, comment: '会话 ID（继承父任务）' },
     smartDocId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true, comment: '关联智能文档 id' },
     branch: { type: DataTypes.STRING(100), allowNull: true, comment: '代码分支' },
+    model: { type: DataTypes.STRING(50), allowNull: true, comment: '选用的 AI 模型（继承父任务）' },
     status: {
       type: DataTypes.ENUM(...AI_TASK_STATUS),
       allowNull: false,

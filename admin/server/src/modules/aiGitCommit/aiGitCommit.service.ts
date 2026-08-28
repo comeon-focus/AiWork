@@ -18,6 +18,7 @@ export interface GitCommitRecordInput {
   commitHash?: string | null;
   changedFiles?: number | null;
   changedDetail?: string | null;
+  changedFileDiffs?: string | null;
   errorMsg?: string | null;
   creatorId: number | null;
   creatorName: string | null;

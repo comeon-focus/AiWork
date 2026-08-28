@@ -38,9 +38,13 @@ export default function SmartDocPage() {
     void codeRepoApi.list().then(setRepoOptions).catch(() => setRepoOptions([]));
   }, [load]);
 
+  const fetchDetail = async (record: SmartDocItem) => {
+    // 列表接口排除 content，查看/编辑前按 id 重新取一次，保证拿到完整正文
+    return smartDocApi.detail(record.id);
+  };
+
   const openModal = async (record: SmartDocItem) => {
-    // 列表返回的内容可能很长，编辑时按 id 重新取一次，保证拿到完整正文
-    const detail = await smartDocApi.detail(record.id);
+    const detail = await fetchDetail(record);
     setEditing(detail);
     form.setFieldsValue({
       title: detail.title,
@@ -49,6 +53,11 @@ export default function SmartDocPage() {
       repoId: detail.repoId ?? null,
     });
     setOpen(true);
+  };
+
+  const openViewer = async (record: SmartDocItem) => {
+    const detail = await fetchDetail(record);
+    setViewing(detail);
   };
 
   const submit = async () => {
@@ -140,7 +149,7 @@ export default function SmartDocPage() {
               width: 160,
               render: (_, record) => (
                 <Space size={4}>
-                  <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => setViewing(record)}>
+                  <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => openViewer(record)}>
                     查看
                   </Button>
                   <Auth perms="orchestration:smartDoc:edit">

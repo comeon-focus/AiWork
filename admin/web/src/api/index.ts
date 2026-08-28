@@ -4,11 +4,11 @@ import type {
   AITaskInput,
   AITaskStatus,
   WorkspaceStatusResponse,
+  ConfigItem,
   OrphanWorkspace,
   OrphanCleanResult,
   EndedTaskResource,
   ReclaimResult,
-  TaskSessionView,
   AiTaskCommitResult,
   AicodingStatus,
   AiSubTaskItem,
@@ -120,6 +120,16 @@ export const codeRepoApi = {
   remove: (id: number) => http.delete<null>(`/repos/${id}`),
 };
 
+export const configApi = {
+  list: () => http.get<ConfigItem[]>('/configs'),
+  get: (key: string) => http.get<ConfigItem>(`/configs/${key}`),
+  create: (body: { configKey: string; configValue: string; remark?: string | null }) =>
+    http.post<ConfigItem>('/configs', body),
+  update: (key: string, body: { configValue: string; remark?: string | null }) =>
+    http.put<ConfigItem>(`/configs/${key}`, body),
+  remove: (key: string) => http.delete<null>(`/configs/${key}`),
+};
+
 export const requirementApi = {
   list: (params?: { title?: string }) => http.get<RequirementItem[]>('/requirements', params),
   upload: (formData: FormData) => http.post<RequirementFileItem[]>('/requirements/upload', formData),
@@ -182,8 +192,6 @@ export const aiTaskApi = {
   /** 回收「已结束」任务的本地资源（保留 DB 行与历史）；force 丢弃未提交改动 */
   reclaimEndedTask: (id: number, force = false) =>
     http.post<ReclaimResult>(`/ai-tasks/${id}/reclaim`, { force }),
-  /** AICoding 会话查看：对话记录 + 最近一次编译改动摘要 */
-  session: (id: number) => http.get<TaskSessionView>(`/ai-tasks/${id}/session`),
 };
 
 export const aiSubTaskApi = {
@@ -195,8 +203,6 @@ export const aiSubTaskApi = {
     http.patch<AiSubTaskItem>(`/ai-sub-tasks/${id}/status`, { status }),
   aicoding: (id: number) => http.post<{ codingStatus: AicodingStatus }>(`/ai-sub-tasks/${id}/aicoding`),
   remove: (id: number) => http.delete<null>(`/ai-sub-tasks/${id}`),
-  /** AICoding 会话查看（与父任务共用同一 sessionId） */
-  session: (id: number) => http.get<TaskSessionView>(`/ai-sub-tasks/${id}/session`),
 };
 
 export const aiCompileLogApi = {

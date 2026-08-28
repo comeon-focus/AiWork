@@ -8,9 +8,10 @@ import mysql from 'mysql2/promise';
 import { Op, DataTypes } from 'sequelize';
 import { config } from '../config/index.js';
 import { sequelize } from '../db/index.js';
-import { Dept, User, Role, Menu, CodeRepo, Requirement, DataTask, DataTaskProject, UserRole, RoleMenu, RoleDept, RoleCodeRepo } from '../models/index.js';
+import { Dept, User, Role, Menu, CodeRepo, Requirement, DataTask, DataTaskProject, Config, UserRole, RoleMenu, RoleDept, RoleCodeRepo } from '../models/index.js';
 import { hashPassword } from '../utils/password.js';
 import { DataScope, MenuType, type MenuTypeValue } from '../types/index.js';
+import { AI_CONCURRENT_PARENT_LIMIT_KEY } from '../modules/config/config.service.js';
 
 const force = process.argv.includes('--force');
 
@@ -164,6 +165,19 @@ const MENU_SEED: MenuSeed[] = [
         component: 'system/userInfo/index',
         icon: 'IdcardOutlined',
         perms: 'monitor:userinfo:view',
+      },
+      {
+        name: '系统配置',
+        type: MenuType.MENU,
+        path: '/system/config',
+        component: 'system/config/index',
+        icon: 'ControlOutlined',
+        perms: 'system:config:list',
+        children: [
+          { name: '新增配置', type: MenuType.BUTTON, perms: 'system:config:add' },
+          { name: '编辑配置', type: MenuType.BUTTON, perms: 'system:config:edit' },
+          { name: '删除配置', type: MenuType.BUTTON, perms: 'system:config:remove' },
+        ],
       },
     ],
   },
@@ -433,6 +447,20 @@ async function ensureAiTaskModelColumn() {
   }
 }
 
+/** 确保 sys_ai_sub_task 已包含 model 字段（继承父任务，模型已声明，此处补齐存量库） */
+async function ensureAiSubTaskModelColumn() {
+  const qi = sequelize.getQueryInterface();
+  const cols = await qi.describeTable('sys_ai_sub_task');
+  if (!cols.model) {
+    await qi.addColumn('sys_ai_sub_task', 'model', {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      comment: '选用的 AI 模型（继承父任务）',
+    });
+    console.log('[db:init] 已为 sys_ai_sub_task 新增 model 字段');
+  }
+}
+
 /** 确保 sys_user 已包含 git_key 字段（模型已声明，此处补齐存量库） */
 async function ensureUserGitKeyColumn() {
   const qi = sequelize.getQueryInterface();
@@ -444,6 +472,20 @@ async function ensureUserGitKeyColumn() {
       comment: 'Git 密钥',
     });
     console.log('[db:init] 已为 sys_user 新增 git_key 字段');
+  }
+}
+
+/** 确保 sys_ai_git_commit 已包含 changed_file_diffs 字段（模型已声明，此处补齐存量库） */
+async function ensureAiGitCommitDiffsColumn() {
+  const qi = sequelize.getQueryInterface();
+  const cols = await qi.describeTable('sys_ai_git_commit');
+  if (!cols.changed_file_diffs) {
+    await qi.addColumn('sys_ai_git_commit', 'changed_file_diffs', {
+      type: DataTypes.TEXT('long'),
+      allowNull: true,
+      comment: '每个改动文件对应的 diff 内容，JSON 对象',
+    });
+    console.log('[db:init] 已为 sys_ai_git_commit 新增 changed_file_diffs 字段');
   }
 }
 
@@ -462,6 +504,149 @@ async function ensureDataTaskProjects() {
   }
 }
 
+/* ── 系统配置种子 ─────────────────────────────────── */
+interface ConfigSeed {
+  configKey: string;
+  configValue: string;
+  remark: string;
+}
+
+const CONFIG_SEED: ConfigSeed[] = [
+  {
+    configKey: AI_CONCURRENT_PARENT_LIMIT_KEY,
+    configValue: '2',
+    remark: 'AI 任务（父任务）同时进行 AICoding 的最大并发数；为空表示不限制，非法值兜底为 2',
+  },
+];
+
+/**
+ * 兼容存量库：确保「系统配置」菜单挂在「系统管理」下，并授权给超级管理员。
+ * 若菜单已存在则按目标路径/组件/权限更新。
+ */
+async function ensureSystemConfigMenu() {
+  const sysParent = await Menu.findOne({ where: { name: '系统管理', type: MenuType.CATALOG } });
+  if (!sysParent) return;
+
+  const existing = await Menu.findOne({ where: { name: '系统配置', parentId: sysParent.id } });
+  let menuId: number;
+  if (existing) {
+    await existing.update({
+      path: '/system/config',
+      component: 'system/config/index',
+      perms: 'system:config:list',
+      icon: 'ControlOutlined',
+      sort: 7,
+    });
+    menuId = existing.id;
+  } else {
+    const created = await Menu.create({
+      parentId: sysParent.id,
+      name: '系统配置',
+      type: MenuType.MENU,
+      path: '/system/config',
+      component: 'system/config/index',
+      perms: 'system:config:list',
+      icon: 'ControlOutlined',
+      sort: 7,
+      visible: 1,
+      status: 1,
+      keepAlive: 0,
+      redirect: null,
+    });
+    menuId = created.id;
+  }
+
+  // 清理系统管理以外的残留同名节点
+  await Menu.destroy({ where: { name: '系统配置', parentId: { [Op.ne]: sysParent.id } } });
+
+  // 确保「新增配置」「编辑配置」「删除配置」按钮存在
+  const addBtn = await Menu.findOne({ where: { name: '新增配置', parentId: menuId } });
+  if (!addBtn) {
+    await Menu.create({
+      parentId: menuId,
+      name: '新增配置',
+      type: MenuType.BUTTON,
+      perms: 'system:config:add',
+      sort: 1,
+      visible: 1,
+      status: 1,
+      keepAlive: 0,
+      redirect: null,
+    });
+  } else {
+    await addBtn.update({ perms: 'system:config:add' });
+  }
+
+  const editBtn = await Menu.findOne({ where: { name: '编辑配置', parentId: menuId } });
+  if (!editBtn) {
+    await Menu.create({
+      parentId: menuId,
+      name: '编辑配置',
+      type: MenuType.BUTTON,
+      perms: 'system:config:edit',
+      sort: 2,
+      visible: 1,
+      status: 1,
+      keepAlive: 0,
+      redirect: null,
+    });
+  } else {
+    await editBtn.update({ perms: 'system:config:edit' });
+  }
+
+  const removeBtn = await Menu.findOne({ where: { name: '删除配置', parentId: menuId } });
+  if (!removeBtn) {
+    await Menu.create({
+      parentId: menuId,
+      name: '删除配置',
+      type: MenuType.BUTTON,
+      perms: 'system:config:remove',
+      sort: 3,
+      visible: 1,
+      status: 1,
+      keepAlive: 0,
+      redirect: null,
+    });
+  } else {
+    await removeBtn.update({ perms: 'system:config:remove' });
+  }
+
+  // 授权给超级管理员
+  const adminRole = await Role.findOne({ where: { roleKey: 'admin' } });
+  if (adminRole) {
+    const exists = await RoleMenu.findOne({ where: { roleId: adminRole.id, menuId } });
+    if (!exists) await RoleMenu.create({ roleId: adminRole.id, menuId });
+
+    const addBtnRecord = (await Menu.findOne({ where: { name: '新增配置', parentId: menuId } }))!;
+    const addExists = await RoleMenu.findOne({ where: { roleId: adminRole.id, menuId: addBtnRecord.id } });
+    if (!addExists) await RoleMenu.create({ roleId: adminRole.id, menuId: addBtnRecord.id });
+
+    const editBtnRecord = (await Menu.findOne({ where: { name: '编辑配置', parentId: menuId } }))!;
+    const editExists = await RoleMenu.findOne({ where: { roleId: adminRole.id, menuId: editBtnRecord.id } });
+    if (!editExists) await RoleMenu.create({ roleId: adminRole.id, menuId: editBtnRecord.id });
+
+    const removeBtnRecord = (await Menu.findOne({ where: { name: '删除配置', parentId: menuId } }))!;
+    const removeExists = await RoleMenu.findOne({ where: { roleId: adminRole.id, menuId: removeBtnRecord.id } });
+    if (!removeExists) await RoleMenu.create({ roleId: adminRole.id, menuId: removeBtnRecord.id });
+  }
+
+  console.log('[db:init] 系统配置菜单已就绪');
+}
+
+/** 兼容存量库：写入默认系统配置（幂等） */
+async function ensureConfigSeed() {
+  for (const item of CONFIG_SEED) {
+    const [config] = await Config.findOrCreate({
+      where: { configKey: item.configKey },
+      defaults: { configKey: item.configKey, configValue: item.configValue, remark: item.remark },
+    });
+    if (config.configValue !== item.configValue || config.remark !== item.remark) {
+      await config.update({ configValue: item.configValue, remark: item.remark });
+    }
+  }
+  console.log('[db:init] 系统配置种子已就绪');
+}
+
 /* ── 主流程 ───────────────────────────────────────── */
 async function main() {
   await ensureDatabase();
@@ -471,9 +656,13 @@ async function main() {
 
   // 增量补齐：存量库不会走下面的种子分支，这里保证新菜单、字段列与多项目关联一定存在
   await ensureAiTaskModelColumn();
+  await ensureAiSubTaskModelColumn();
   await ensureUserGitKeyColumn();
+  await ensureAiGitCommitDiffsColumn();
   await ensureUserInfoMenu();
   await ensureDataTaskProjects();
+  await ensureSystemConfigMenu();
+  await ensureConfigSeed();
 
   const existing = await User.count();
   if (existing > 0 && !force) {

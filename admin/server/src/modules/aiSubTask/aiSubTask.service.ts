@@ -15,9 +15,9 @@ import {
   assertParentNotInRunningQueue,
   startAicodingRun,
   buildAicodingPrompt,
-  buildSessionView,
   type AicodingActor,
 } from '../aiTask/aiTask.service.js';
+import { getAiConcurrentParentLimit } from '../config/config.service.js';
 
 export interface AiSubTaskInput {
   parentId: number;
@@ -56,13 +56,15 @@ export async function listAiSubTasks(filter: {
 }
 
 export async function createAiSubTask(input: AiSubTaskInput) {
+  const parent = await AITask.findByPk(input.parentId, { attributes: ['sessionId', 'branch', 'model'] });
   return AiSubTask.create({
     parentId: input.parentId,
     title: input.title.trim(),
     summary: input.summary?.trim() || null,
-    sessionId: input.sessionId ?? null,
+    sessionId: parent?.sessionId ?? input.sessionId ?? null,
     smartDocId: input.smartDocId ?? null,
-    branch: input.branch?.trim() || null,
+    branch: parent?.branch ?? input.branch?.trim() ?? null,
+    model: parent?.model ?? null,
     status: input.status ?? '待开始',
     codingStatus: '暂无',
     creatorId: input.creatorId ?? null,
@@ -139,8 +141,9 @@ export async function aicodingAiSubTask(
   }
   if (await isTaskLocked(parent.id)) throw ApiError.badRequest('该任务正在 AICoding 中，无法重复启动');
   if (!opts?.fromQueue) await assertParentNotInRunningQueue(parent.id);
-  if (await activeCodingParentCount(parent.id) >= 2) {
-    throw ApiError.badRequest('最多允许两个任务同时进行 AICoding，请稍后再试');
+  const concurrentLimit = getAiConcurrentParentLimit();
+  if (Number.isFinite(concurrentLimit) && (await activeCodingParentCount(parent.id)) >= concurrentLimit) {
+    throw ApiError.badRequest(`最多允许 ${concurrentLimit} 个任务同时进行 AICoding，请稍后再试`);
   }
 
   await sub.update({ codingStatus: '编译中', codingError: null, status: '进行中' });
@@ -157,7 +160,7 @@ export async function aicodingAiSubTask(
       smartDocId: sub.smartDocId,
       branch: sub.branch ?? parent.branch,
       prompt,
-      model: parent.model,
+      model: sub.model ?? parent.model,
       actor,
     });
   } catch (e) {
@@ -167,9 +170,3 @@ export async function aicodingAiSubTask(
   return { codingStatus: '编译中' as AicodingStatus };
 }
 
-/** 子任务 AICoding 会话视图：与父任务共用同一 sessionId，故展示的是同一段会话 */
-export async function getSubTaskSession(subTaskId: number) {
-  const sub = await AiSubTask.findByPk(subTaskId);
-  if (!sub) throw ApiError.notFound('子任务不存在');
-  return buildSessionView(sub.sessionId ?? '', sub.parentId, sub.id);
-}

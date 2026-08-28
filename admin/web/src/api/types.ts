@@ -86,6 +86,15 @@ export interface CodeRepoItem {
   createdAt: string;
 }
 
+export interface ConfigItem {
+  id: number;
+  configKey: string;
+  configValue: string;
+  remark: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RequirementFileItem {
   id: number;
   requirementId: number;
@@ -268,39 +277,6 @@ export interface ReclaimResult {
   freedBytes: number;
 }
 
-/** 单条 AICoding 会话消息 */
-export interface SessionMessage {
-  role: string;
-  text: string;
-  timestamp?: number | null;
-}
-
-/** 会话关联的最近一次编译记录摘要 */
-export interface SessionCompileLog {
-  id: number;
-  status: string;
-  taskType?: string | null;
-  title?: string | null;
-  model?: string | null;
-  changedFiles?: number | null;
-  changedDetail?: string | null;
-  errorMsg?: string | null;
-  commitsAhead?: number | null;
-  durationMs?: number | null;
-  numTurns?: number | null;
-  startedAt?: string;
-  finishedAt?: string | null;
-}
-
-/** AICoding 会话视图：对话记录 + 最近一次编译改动摘要 */
-export interface TaskSessionView {
-  sessionId: string;
-  /** 会话 jsonl 是否存在（工作区被回收后可能已不在） */
-  exists: boolean;
-  messages: SessionMessage[];
-  compileLog: SessionCompileLog | null;
-}
-
 /** 提交代码结果 */
 export interface AiTaskCommitResult {
   /** 本次提交涉及的文件数 */
@@ -338,6 +314,8 @@ export interface AiSubTaskItem {
   smartDoc?: { id: number; title: string } | null;
   /** 代码分支 */
   branch?: string | null;
+  /** 选用的 AI 模型；继承父任务，为空/null 表示使用系统默认模型 */
+  model?: string | null;
   /** 任务状态：待开始 / 进行中 / 已结束 */
   status: AITaskStatus;
   /** AICoding 状态：暂无 / 编译中 / 编译成功 / 编译失败 */
@@ -468,6 +446,8 @@ export interface AiGitCommitItem {
   changedFiles: number | null;
   /** 改动明细，仅详情接口返回 */
   changedDetail?: string | null;
+  /** 每个改动文件对应的 diff 内容，JSON 对象：{ [path]: diffText } */
+  changedFileDiffs?: string | null;
   errorMsg: string | null;
   creatorId: number | null;
   creatorName: string | null;

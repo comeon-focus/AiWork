@@ -196,17 +196,6 @@ router.patch(
   },
 );
 
-/** AICoding 会话查看：返回会话对话记录 + 最近一次编译的改动摘要 */
-router.get(
-  '/:id/session',
-  requirePerms('orchestration:aiTask:list'),
-  validate(idSchema, 'params'),
-  async (req, res) => {
-    const { id } = req.params as unknown as z.infer<typeof idSchema>;
-    ok(res, await service.getTaskSession(id));
-  },
-);
-
 router.post(
   '/:id/commit',
   requirePerms('orchestration:aiTask:commit'),

@@ -3,6 +3,8 @@ import { Viewer } from '@bytemd/react';
 import gfm from '@bytemd/plugin-gfm';
 import type { BytemdPlugin } from 'bytemd';
 import 'bytemd/dist/index.css';
+import './markdownCode.css';
+import { normalizeTextCodeBlock } from './bytemdPlugins';
 
 interface TocItem {
   level: number;
@@ -100,7 +102,7 @@ function headingAnchorPlugin(items: TocItem[]): BytemdPlugin {
 export function MarkdownViewer({ value, showToc = true }: Props) {
   const raw = value ?? '';
   const toc = useMemo(() => extractToc(raw), [raw]);
-  const plugins = useMemo(() => [gfm(), headingAnchorPlugin(toc)], [toc]);
+  const plugins = useMemo(() => [gfm(), normalizeTextCodeBlock(), headingAnchorPlugin(toc)], [toc]);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const handleTocClick = (id: string) => {
@@ -111,7 +113,7 @@ export function MarkdownViewer({ value, showToc = true }: Props) {
   };
 
   if (!showToc || toc.length === 0) {
-    return <Viewer value={raw} plugins={[gfm()]} />;
+    return <Viewer value={raw} plugins={[gfm(), normalizeTextCodeBlock()]} />;
   }
 
   return (
